@@ -2,8 +2,10 @@ use anyhow::{Context, Result};
 use eframe::egui;
 use std::path::PathBuf;
 use std::sync::Arc;
+use std::time::{Duration, Instant};
 
 use crate::config::Config;
+use crate::history::History;
 use crate::tray::{MenuAction, TrayManager};
 use crate::upload::{S3Client, UploadManager, UploadProgress};
 
@@ -16,6 +18,13 @@ impl UiManager {
 
         let tray_manager = TrayManager::new()
             .context("Failed to create system tray")?;
+
+        let history_path = std::env::current_exe()?
+            .parent()
+            .unwrap_or_else(|| std::path::Path::new("."))
+            .join("history.json");
+        let history = History::new(&history_path)
+            .context("Failed to load history")?;
 
         let options = eframe::NativeOptions {
             viewport: egui::ViewportBuilder::default()
@@ -37,6 +46,8 @@ impl UiManager {
                     progress_rx,
                     cancel_token,
                     current_upload: None,
+                    history,
+                    copy_feedback: None,
                 })
             }),
         )
@@ -78,6 +89,8 @@ struct DropZoneApp {
     progress_rx: tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
     cancel_token: tokio_util::sync::CancellationToken,
     current_upload: Option<UploadProgress>,
+    history: History,
+    copy_feedback: Option<(String, Instant)>,
 }
 
 impl eframe::App for DropZoneApp {
@@ -171,6 +184,77 @@ impl eframe::App for DropZoneApp {
                 });
         }
 
+        // History window
+        egui::Window::new("Historia")
+            .collapsible(true)
+            .resizable(true)
+            .default_width(300.0)
+            .show(ctx, |ui| {
+                let entries = self.history.get_all();
+                
+                if entries.is_empty() {
+                    ui.label("Brak historii");
+                } else {
+                    egui::ScrollArea::vertical()
+                        .auto_shrink([false; 2])
+                        .show(ui, |ui| {
+                            for entry in entries.iter().take(5) {
+                                ui.horizontal(|ui| {
+                                    // Truncate filename if too long
+                                    let display_name = if entry.filename.len() > 25 {
+                                        format!("{}...", &entry.filename[..22])
+                                    } else {
+                                        entry.filename.clone()
+                                    };
+                                    
+                                    // Check for double-click
+                                    let response = ui.label(&display_name);
+                                    if response.double_clicked() {
+                                        let url = entry.url.clone();
+                                        if let Err(e) = open_url_in_browser(&url) {
+                                            tracing::error!("Failed to open URL: {}", e);
+                                        }
+                                    }
+                                    
+                                    if ui.button("Kopiuj").clicked() {
+                                        match arboard::Clipboard::new() {
+                                            Ok(mut clipboard) => {
+                                                match clipboard.set_text(entry.url.clone()) {
+                                                    Ok(_) => {
+                                                        self.copy_feedback = Some((entry.filename.clone(), Instant::now()));
+                                                        tracing::info!("Copied to clipboard: {}", entry.filename);
+                                                    }
+                                                    Err(e) => {
+                                                        tracing::error!("Failed to copy to clipboard: {}", e);
+                                                    }
+                                                }
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Failed to access clipboard: {}", e);
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                }
+            });
+
+        // Copy feedback notification
+        if let Some((filename, instant)) = &self.copy_feedback {
+            let elapsed = instant.elapsed();
+            if elapsed < Duration::from_secs(2) {
+                egui::Window::new("Powiadomienie")
+                    .collapsible(false)
+                    .resizable(false)
+                    .show(ctx, |ui| {
+                        ui.label(format!("Skopiowano: {}", filename));
+                    });
+            } else {
+                self.copy_feedback = None;
+            }
+        }
+
         let dropped_files: Vec<PathBuf> = ctx.input(|i| {
             i.raw
                 .dropped_files
@@ -225,4 +309,21 @@ impl eframe::App for DropZoneApp {
 
         ctx.request_repaint();
     }
+}
+
+fn open_url_in_browser(url: &str) -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("cmd")
+            .args(&["/C", "start", url])
+            .spawn()
+            .context("Failed to open URL")?;
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        webbrowser::open(url).context("Failed to open URL")?;
+    }
+
+    Ok(())
 }
