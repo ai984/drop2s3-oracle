@@ -2,6 +2,7 @@
 
 mod config;
 mod dpapi_crypto;
+mod embedded_icons;
 mod history;
 mod logging;
 mod portable_crypto;

@@ -4,6 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+use crate::embedded_icons::IconType;
 use crate::history::History;
 use crate::tray::{MenuAction, TrayManager};
 use crate::upload::{S3Client, UploadManager, UploadProgress};
@@ -126,8 +127,7 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Uploading => {
                     if !self.is_uploading {
                         self.is_uploading = true;
-                        let icon_path = crate::utils::get_exe_dir().join("assets/icon_uploading.ico");
-                        if let Err(e) = self.tray_manager.set_icon(icon_path.to_str().unwrap_or("assets/icon_uploading.ico")) {
+                        if let Err(e) = self.tray_manager.set_icon(IconType::Uploading) {
                             tracing::error!("Failed to set uploading icon: {}", e);
                         }
                     }
@@ -136,9 +136,8 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
                     if self.is_uploading {
                         self.is_uploading = false;
-                        let icon_path = crate::utils::get_exe_dir().join("assets/icon.ico");
-                        if let Err(e) = self.tray_manager.set_icon(icon_path.to_str().unwrap_or("assets/icon.ico")) {
-                            tracing::error!("Failed to restore static icon: {}", e);
+                        if let Err(e) = self.tray_manager.set_icon(IconType::Normal) {
+                            tracing::error!("Failed to restore icon: {}", e);
                         }
                     }
                     self.current_upload = None;

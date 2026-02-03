@@ -1,8 +1,10 @@
 use anyhow::{Context, Result};
 use tray_icon::{
     menu::{Menu, MenuEvent, MenuItem, MenuId},
-    Icon, TrayIcon, TrayIconBuilder, TrayIconEvent,
+    TrayIcon, TrayIconBuilder, TrayIconEvent,
 };
+
+use crate::embedded_icons::{self, IconType};
 
 /// System tray manager for Drop2S3 application
 /// Provides tray icon with context menu: "Pokaż okno", "Ustawienia", "Zamknij"
@@ -38,8 +40,7 @@ impl TrayManager {
         menu.append(&quit_item)
             .context("Failed to add 'Zamknij' to menu")?;
 
-        let icon_path = crate::utils::get_exe_dir().join("assets/icon.ico");
-        let icon = Self::load_icon(icon_path.to_str().unwrap_or("assets/icon.ico"))?;
+        let icon = embedded_icons::load_icon(IconType::Normal)?;
 
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
@@ -55,14 +56,6 @@ impl TrayManager {
             settings_item_id,
             quit_item_id,
         })
-    }
-
-    fn load_icon(path: &str) -> Result<Icon> {
-        let icon_bytes = std::fs::read(path)
-            .with_context(|| format!("Failed to read icon file: {}", path))?;
-
-        Icon::from_rgba(icon_bytes.clone(), 16, 16)
-            .with_context(|| format!("Failed to parse icon from: {}", path))
     }
 
     /// Processes tray icon events (left click, right click)
@@ -121,15 +114,8 @@ impl TrayManager {
         MenuEvent::receiver().try_recv().ok()
     }
 
-    /// Sets the tray icon to a new icon file
-    ///
-    /// # Arguments
-    /// * `icon_path` - Path to the icon file (e.g., "assets/icon_uploading.ico")
-    ///
-    /// # Errors
-    /// Returns error if icon file cannot be loaded or icon update fails
-    pub fn set_icon(&mut self, icon_path: &str) -> Result<()> {
-        let icon = Self::load_icon(icon_path)?;
+    pub fn set_icon(&mut self, icon_type: IconType) -> Result<()> {
+        let icon = embedded_icons::load_icon(icon_type)?;
         self.tray_icon
             .set_icon(Some(icon))
             .context("Failed to update tray icon")?;

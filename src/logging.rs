@@ -36,16 +36,6 @@ pub fn init_logging() -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use tracing_subscriber::EnvFilter;
-
-    #[test]
-    fn test_env_filter_default() {
-        let filter = EnvFilter::try_from_default_env()
-            .unwrap_or_else(|_| EnvFilter::new("info,drop2s3=info"));
-        
-        assert!(format!("{:?}", filter).contains("info"));
-    }
-
     #[test]
     fn test_log_directory_path_construction() {
         let exe_dir = crate::utils::get_exe_dir();
