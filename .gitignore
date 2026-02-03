@@ -25,6 +25,7 @@ history.json
 *.pdb
 .sisyphus*
 .xwin-cache/
+.cargo/config.toml
 
 # Added by cargo
 
