@@ -107,7 +107,7 @@ impl eframe::App for DropZoneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.window_positioned {
             self.window_positioned = true;
-            let screen = ctx.screen_rect();
+            let screen = ctx.input(|i| i.viewport_rect());
             let window_size = egui::vec2(300.0, 400.0);
             let margin = 20.0;
             let pos = egui::pos2(

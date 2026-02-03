@@ -1,6 +1,6 @@
 use anyhow::{anyhow, Context, Result};
 use chacha20poly1305::{
-    aead::{Aead, KeyInit, OsRng},
+    aead::{Aead, KeyInit},
     XChaCha20Poly1305,
 };
 use serde::{Deserialize, Serialize};
@@ -46,10 +46,8 @@ struct CredentialsPayload {
 
 /// Encrypt credentials with embedded key (for admin CLI tool)
 pub fn encrypt_credentials(access_key: &str, secret_key: &str) -> Result<EncryptedCredentials> {
-    use rand::RngCore;
-    
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut nonce_bytes);
+    rand::fill(&mut nonce_bytes);
     
     let key = get_embedded_key();
     let cipher = XChaCha20Poly1305::new_from_slice(&key)

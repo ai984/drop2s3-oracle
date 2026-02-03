@@ -7,10 +7,10 @@ description = "Minimalist Windows tray app for uploading files to Oracle Cloud O
 license = "MIT"
 
 [dependencies]
-eframe = "0.30"
-egui = "0.30"
+eframe = "0.33"
+egui = "0.33"
 
-tray-icon = "0.19"
+tray-icon = "0.21"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
@@ -29,7 +29,7 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
-windows = { version = "0.58", features = [
+windows = { version = "0.62", features = [
     "Win32_Security_Cryptography",
     "Win32_Foundation",
     "Win32_System_Memory",
@@ -49,7 +49,7 @@ image = "0.25"
 zeroize = "1"
 base64 = "0.22"
 chacha20poly1305 = "0.10"
-rand = "0.8"
+rand = "0.9"
 
 anyhow = "1"
 thiserror = "2"
