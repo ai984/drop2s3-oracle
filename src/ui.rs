@@ -31,7 +31,6 @@ impl UiManager {
             viewport: egui::ViewportBuilder::default()
                 .with_inner_size([300.0, 400.0])
                 .with_min_inner_size([280.0, 350.0])
-                .with_position(egui::pos2(9999.0, 9999.0))
                 .with_always_on_top()
                 .with_resizable(true)
                 .with_decorations(true)
@@ -58,6 +57,7 @@ impl UiManager {
                     is_uploading: false,
                     rt_handle: handle,
                     should_exit: false,
+                    window_positioned: false,
                 }))
             }),
         )
@@ -100,10 +100,23 @@ struct DropZoneApp {
     is_uploading: bool,
     rt_handle: Handle,
     should_exit: bool,
+    window_positioned: bool,
 }
 
 impl eframe::App for DropZoneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
+        if !self.window_positioned {
+            self.window_positioned = true;
+            let screen = ctx.screen_rect();
+            let window_size = egui::vec2(300.0, 400.0);
+            let margin = 20.0;
+            let pos = egui::pos2(
+                screen.max.x - window_size.x - margin,
+                screen.max.y - window_size.y - margin - 40.0,
+            );
+            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+        }
+
         if let Some(event) = TrayManager::poll_tray_event() {
             self.tray_manager.handle_tray_event(&event);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
