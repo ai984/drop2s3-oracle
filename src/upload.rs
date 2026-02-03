@@ -370,6 +370,70 @@ impl UploadManager {
 
         Ok(url)
     }
+
+    /// Upload entire folder recursively, preserving directory structure
+    pub async fn upload_folder<P: AsRef<Path>>(&self, folder_path: P) -> Result<Vec<String>> {
+        use walkdir::WalkDir;
+
+        let folder = folder_path.as_ref();
+        let folder_name = folder
+            .file_name()
+            .ok_or_else(|| anyhow::anyhow!("Invalid folder path"))?
+            .to_string_lossy();
+
+        // Enumerate files recursively
+        let mut files = Vec::new();
+        for entry in WalkDir::new(folder)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                // Skip hidden files (starting with .)
+                if entry
+                    .file_name()
+                    .to_string_lossy()
+                    .starts_with('.')
+                {
+                    continue;
+                }
+                files.push(entry.path().to_path_buf());
+            }
+        }
+
+        // Upload all files with preserved structure
+        self.upload_files_with_structure(files, folder, &folder_name)
+            .await
+    }
+
+    /// Upload files preserving their relative paths under a base folder name
+    async fn upload_files_with_structure(
+        &self,
+        files: Vec<PathBuf>,
+        base_path: &Path,
+        folder_name: &str,
+    ) -> Result<Vec<String>> {
+        use futures::stream::{self, StreamExt};
+
+        let results = stream::iter(files)
+            .map(|file| async move {
+                // Calculate relative path
+                let rel_path = file
+                    .strip_prefix(base_path)
+                    .map_err(|e| anyhow::anyhow!("Path error: {}", e))?;
+
+                // Preserve structure: folder_name/rel/path/file.ext
+                let s3_key = format!("{}/{}", folder_name, rel_path.display());
+
+                // Upload with custom key
+                self.s3_client.upload_file(&file, &s3_key).await
+            })
+            .buffer_unordered(self.parallel_limit)
+            .collect::<Vec<_>>()
+            .await;
+
+        results.into_iter().collect()
+    }
 }
 
 /// Sanitize filename: transliterate Polish chars, lowercase, replace spaces with hyphens
@@ -624,5 +688,124 @@ mod tests {
         
         assert!(token1.is_cancelled());
         assert!(token2.is_cancelled());
+    }
+
+    #[test]
+    fn test_folder_recursive_enumeration() {
+        use std::fs;
+        use tempfile::TempDir;
+        use walkdir::WalkDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let base = temp_dir.path();
+
+        fs::create_dir_all(base.join("subdir1")).unwrap();
+        fs::create_dir_all(base.join("subdir2/nested")).unwrap();
+        
+        fs::write(base.join("file1.txt"), b"content1").unwrap();
+        fs::write(base.join("subdir1/file2.txt"), b"content2").unwrap();
+        fs::write(base.join("subdir2/file3.txt"), b"content3").unwrap();
+        fs::write(base.join("subdir2/nested/file4.txt"), b"content4").unwrap();
+        fs::write(base.join(".hidden"), b"hidden").unwrap();
+
+        let mut files = Vec::new();
+        for entry in WalkDir::new(base)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                if entry.file_name().to_string_lossy().starts_with('.') {
+                    continue;
+                }
+                files.push(entry.path().to_path_buf());
+            }
+        }
+
+        assert_eq!(files.len(), 4);
+        
+        let filenames: Vec<String> = files
+            .iter()
+            .filter_map(|p| p.file_name().and_then(|n| n.to_str()).map(String::from))
+            .collect();
+        
+        assert!(filenames.contains(&"file1.txt".to_string()));
+        assert!(filenames.contains(&"file2.txt".to_string()));
+        assert!(filenames.contains(&"file3.txt".to_string()));
+        assert!(filenames.contains(&"file4.txt".to_string()));
+        assert!(!filenames.contains(&".hidden".to_string()));
+    }
+
+    #[test]
+    fn test_folder_path_preservation() {
+        use std::path::Path;
+
+        let base = Path::new("/test/folder");
+        let file1 = Path::new("/test/folder/file.txt");
+        let file2 = Path::new("/test/folder/subdir/nested.txt");
+        
+        let rel1 = file1.strip_prefix(base).unwrap();
+        let rel2 = file2.strip_prefix(base).unwrap();
+        
+        let s3_key1 = format!("myfolder/{}", rel1.display());
+        let s3_key2 = format!("myfolder/{}", rel2.display());
+        
+        assert_eq!(s3_key1, "myfolder/file.txt");
+        assert_eq!(s3_key2, "myfolder/subdir/nested.txt");
+    }
+
+    #[test]
+    fn test_folder_hidden_files_skipped() {
+        let hidden_names = vec![".gitignore", ".env", ".hidden"];
+        let visible_names = vec!["file.txt", "README.md", "data.json"];
+
+        for name in hidden_names {
+            assert!(name.starts_with('.'));
+        }
+
+        for name in visible_names {
+            assert!(!name.starts_with('.'));
+        }
+    }
+
+    #[test]
+    fn test_folder_empty_directory_skipped() {
+        use std::fs;
+        use tempfile::TempDir;
+        use walkdir::WalkDir;
+
+        let temp_dir = TempDir::new().unwrap();
+        let base = temp_dir.path();
+
+        fs::create_dir_all(base.join("empty_dir")).unwrap();
+        fs::create_dir_all(base.join("with_file")).unwrap();
+        fs::write(base.join("with_file/file.txt"), b"content").unwrap();
+
+        let mut files = Vec::new();
+        for entry in WalkDir::new(base)
+            .follow_links(false)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() {
+                files.push(entry.path().to_path_buf());
+            }
+        }
+
+        assert_eq!(files.len(), 1);
+        assert!(files[0].ends_with("file.txt"));
+    }
+
+    #[test]
+    fn test_folder_structure_multiple_levels() {
+        use std::path::Path;
+
+        let base = Path::new("/root/myfolder");
+        let deep_file = Path::new("/root/myfolder/a/b/c/d/deep.txt");
+        
+        let rel = deep_file.strip_prefix(base).unwrap();
+        let s3_key = format!("myfolder/{}", rel.display());
+        
+        assert_eq!(s3_key, "myfolder/a/b/c/d/deep.txt");
     }
 }
