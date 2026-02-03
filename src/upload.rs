@@ -3,6 +3,7 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -200,6 +201,7 @@ pub enum UploadStatus {
     Uploading,
     Completed,
     Failed(String),
+    Cancelled,
 }
 
 /// Progress information for a single file upload
@@ -218,6 +220,7 @@ pub struct UploadManager {
     parallel_limit: usize,
     max_retries: u32,
     progress_tx: tokio::sync::mpsc::UnboundedSender<UploadProgress>,
+    cancel_token: CancellationToken,
 }
 
 impl UploadManager {
@@ -225,17 +228,24 @@ impl UploadManager {
         s3_client: S3Client,
         parallel_limit: usize,
         max_retries: u32,
-    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<UploadProgress>) {
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<UploadProgress>, CancellationToken) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel_token = CancellationToken::new();
         (
             Self {
                 s3_client,
                 parallel_limit,
                 max_retries,
                 progress_tx: tx,
+                cancel_token: cancel_token.clone(),
             },
             rx,
+            cancel_token,
         )
+    }
+
+    pub fn cancel(&self) {
+        self.cancel_token.cancel();
     }
 
     pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<String>> {
@@ -295,6 +305,20 @@ impl UploadManager {
             .with_context(|| format!("Failed to get file metadata: {}", file.display()))?
             .len();
 
+        // Check if cancelled before starting
+        if self.cancel_token.is_cancelled() {
+            self.progress_tx
+                .send(UploadProgress {
+                    file_id,
+                    filename,
+                    bytes_uploaded: 0,
+                    total_bytes,
+                    status: UploadStatus::Cancelled,
+                })
+                .ok();
+            return Err(anyhow::anyhow!("Upload cancelled"));
+        }
+
         self.progress_tx
             .send(UploadProgress {
                 file_id: file_id.clone(),
@@ -315,7 +339,24 @@ impl UploadManager {
             })
             .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
 
-        let url = self.s3_client.upload_file_auto(&file, 5, 5).await?;
+        // Use tokio::select! to allow cancellation during upload
+        let url = tokio::select! {
+            _ = self.cancel_token.cancelled() => {
+                self.progress_tx
+                    .send(UploadProgress {
+                        file_id,
+                        filename,
+                        bytes_uploaded: 0,
+                        total_bytes,
+                        status: UploadStatus::Cancelled,
+                    })
+                    .ok();
+                return Err(anyhow::anyhow!("Upload cancelled"));
+            }
+            result = self.s3_client.upload_file_auto(&file, 5, 5) => {
+                result?
+            }
+        };
 
         self.progress_tx
             .send(UploadProgress {
@@ -554,5 +595,34 @@ mod tests {
                 _ => {}
             }
         }
+    }
+
+    #[test]
+    fn test_cancel_before_start() {
+        let cancel_token = CancellationToken::new();
+        
+        cancel_token.cancel();
+        
+        assert!(cancel_token.is_cancelled());
+    }
+
+    #[test]
+    fn test_cancelled_status_variant() {
+        let cancelled = UploadStatus::Cancelled;
+        assert_eq!(cancelled, UploadStatus::Cancelled);
+        
+        let cloned = cancelled.clone();
+        assert_eq!(cloned, UploadStatus::Cancelled);
+    }
+
+    #[test]
+    fn test_cancellation_token_clone() {
+        let token1 = CancellationToken::new();
+        let token2 = token1.clone();
+        
+        token1.cancel();
+        
+        assert!(token1.is_cancelled());
+        assert!(token2.is_cancelled());
     }
 }
