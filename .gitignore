@@ -1,0 +1,25 @@
+# Spec
+specyfikacja.md
+
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# App runtime files
+config.toml
+history.json
+*.log
+
+# Build artifacts
+*.exe
+*.pdb
