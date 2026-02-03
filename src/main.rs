@@ -1,4 +1,5 @@
 mod config;
+mod crypto;
 mod history;
 mod logging;
 mod tray;
