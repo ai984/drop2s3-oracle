@@ -36,6 +36,7 @@ impl UiManager {
                     upload_manager,
                     progress_rx,
                     cancel_token,
+                    current_upload: None,
                 })
             }),
         )
@@ -74,10 +75,9 @@ fn initialize_upload_manager() -> Result<(
 struct DropZoneApp {
     tray_manager: TrayManager,
     upload_manager: Arc<UploadManager>,
-    #[allow(dead_code)]
     progress_rx: tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
-    #[allow(dead_code)]
     cancel_token: tokio_util::sync::CancellationToken,
+    current_upload: Option<UploadProgress>,
 }
 
 impl eframe::App for DropZoneApp {
@@ -106,6 +106,69 @@ impl eframe::App for DropZoneApp {
                 }
                 MenuAction::None => {}
             }
+        }
+
+        while let Ok(progress) = self.progress_rx.try_recv() {
+            use crate::upload::UploadStatus;
+            
+            match &progress.status {
+                UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
+                    self.current_upload = None;
+                }
+                _ => {
+                    self.current_upload = Some(progress);
+                }
+            }
+        }
+
+        if let Some(progress) = &self.current_upload {
+            use crate::upload::UploadStatus;
+            
+            egui::Window::new("Upload Progress")
+                .collapsible(false)
+                .resizable(false)
+                .show(ctx, |ui| {
+                    ui.vertical(|ui| {
+                        ui.label(&progress.filename);
+                        ui.add_space(5.0);
+                        
+                        let fraction = if progress.total_bytes > 0 {
+                            progress.bytes_uploaded as f32 / progress.total_bytes as f32
+                        } else {
+                            0.0
+                        };
+                        
+                        ui.add(
+                            egui::ProgressBar::new(fraction)
+                                .show_percentage()
+                        );
+                        ui.add_space(5.0);
+                        
+                        let bytes_uploaded_mb = progress.bytes_uploaded as f64 / (1024.0 * 1024.0);
+                        let total_bytes_mb = progress.total_bytes as f64 / (1024.0 * 1024.0);
+                        ui.label(format!("{:.2} MB / {:.2} MB", bytes_uploaded_mb, total_bytes_mb));
+                        
+                        ui.add_space(5.0);
+                        
+                        let status_text = match &progress.status {
+                            UploadStatus::Queued => "W kolejce...",
+                            UploadStatus::Uploading => "Przesyłanie...",
+                            UploadStatus::Completed => "Ukończono",
+                            UploadStatus::Failed(err) => &format!("Błąd: {}", err),
+                            UploadStatus::Cancelled => "Anulowano",
+                        };
+                        ui.label(status_text);
+                        
+                        ui.add_space(10.0);
+                        
+                        if matches!(progress.status, UploadStatus::Queued | UploadStatus::Uploading) {
+                            if ui.button("Anuluj").clicked() {
+                                self.cancel_token.cancel();
+                                tracing::info!("Upload cancelled by user");
+                            }
+                        }
+                    });
+                });
         }
 
         let dropped_files: Vec<PathBuf> = ctx.input(|i| {
