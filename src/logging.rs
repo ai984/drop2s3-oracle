@@ -1,5 +1,4 @@
 use anyhow::Result;
-use std::io;
 use tracing_appender::rolling::{RollingFileAppender, Rotation};
 use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 

@@ -1,6 +1,6 @@
 # Drop2S3 ☁️
 
-> Minimalistyczna aplikacja Windows do szybkiego przesyłania plików na Oracle Cloud Object Storage
+> **Backend biblioteka** do przesyłania plików na Oracle Cloud Object Storage (GUI w trakcie implementacji)
 
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows)](https://www.microsoft.com/windows)
