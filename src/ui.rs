@@ -48,6 +48,7 @@ impl UiManager {
                     current_upload: None,
                     history,
                     copy_feedback: None,
+                    is_uploading: false,
                 })
             }),
         )
@@ -91,6 +92,7 @@ struct DropZoneApp {
     current_upload: Option<UploadProgress>,
     history: History,
     copy_feedback: Option<(String, Instant)>,
+    is_uploading: bool,
 }
 
 impl eframe::App for DropZoneApp {
@@ -125,7 +127,22 @@ impl eframe::App for DropZoneApp {
             use crate::upload::UploadStatus;
             
             match &progress.status {
+                UploadStatus::Uploading => {
+                    if !self.is_uploading {
+                        self.is_uploading = true;
+                        if let Err(e) = self.tray_manager.set_icon("assets/icon_uploading.ico") {
+                            tracing::error!("Failed to set uploading icon: {}", e);
+                        }
+                    }
+                    self.current_upload = Some(progress);
+                }
                 UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
+                    if self.is_uploading {
+                        self.is_uploading = false;
+                        if let Err(e) = self.tray_manager.set_icon("assets/icon.ico") {
+                            tracing::error!("Failed to restore static icon: {}", e);
+                        }
+                    }
                     self.current_upload = None;
                 }
                 _ => {

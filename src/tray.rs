@@ -7,7 +7,6 @@ use tray_icon::{
 /// System tray manager for Drop2S3 application
 /// Provides tray icon with context menu: "Pokaż okno", "Ustawienia", "Zamknij"
 pub struct TrayManager {
-    #[allow(dead_code)]
     tray_icon: TrayIcon,
     #[allow(dead_code)]
     menu: Menu,
@@ -119,6 +118,21 @@ impl TrayManager {
     /// Returns Some(event) if event available, None otherwise
     pub fn poll_menu_event() -> Option<MenuEvent> {
         MenuEvent::receiver().try_recv().ok()
+    }
+
+    /// Sets the tray icon to a new icon file
+    ///
+    /// # Arguments
+    /// * `icon_path` - Path to the icon file (e.g., "assets/icon_uploading.ico")
+    ///
+    /// # Errors
+    /// Returns error if icon file cannot be loaded or icon update fails
+    pub fn set_icon(&mut self, icon_path: &str) -> Result<()> {
+        let icon = Self::load_icon(icon_path)?;
+        self.tray_icon
+            .set_icon(Some(icon))
+            .context("Failed to update tray icon")?;
+        Ok(())
     }
 }
 
