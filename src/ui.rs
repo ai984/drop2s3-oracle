@@ -117,6 +117,9 @@ impl eframe::App for DropZoneApp {
                 MenuAction::ShowSettings => {
                     tracing::info!("Show settings action received (not implemented yet)");
                 }
+                MenuAction::Lock => {
+                    tracing::info!("Lock action received - clearing cached credentials");
+                }
                 MenuAction::None => {}
             }
         }
