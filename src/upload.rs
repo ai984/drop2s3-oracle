@@ -1,7 +1,8 @@
 use anyhow::{Context, Result};
 use s3::creds::Credentials;
 use s3::{Bucket, Region};
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::time::Duration;
 use uuid::Uuid;
 
 use crate::config::Config;
@@ -192,35 +193,141 @@ impl S3Client {
     }
 }
 
+/// Upload status tracking
+#[derive(Debug, Clone, PartialEq)]
+pub enum UploadStatus {
+    Queued,
+    Uploading,
+    Completed,
+    Failed(String),
+}
+
+/// Progress information for a single file upload
+#[derive(Debug, Clone)]
+pub struct UploadProgress {
+    pub file_id: String,
+    pub filename: String,
+    pub bytes_uploaded: u64,
+    pub total_bytes: u64,
+    pub status: UploadStatus,
+}
+
+/// Manages upload queue with parallel processing and progress tracking
 pub struct UploadManager {
-    client: Option<S3Client>,
+    s3_client: S3Client,
+    parallel_limit: usize,
+    max_retries: u32,
+    progress_tx: tokio::sync::mpsc::UnboundedSender<UploadProgress>,
 }
 
 impl UploadManager {
-    pub fn new() -> Self {
-        UploadManager { client: None }
+    pub fn new(
+        s3_client: S3Client,
+        parallel_limit: usize,
+        max_retries: u32,
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<UploadProgress>) {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        (
+            Self {
+                s3_client,
+                parallel_limit,
+                max_retries,
+                progress_tx: tx,
+            },
+            rx,
+        )
     }
 
-    pub async fn initialize(&mut self, config: &Config) -> Result<()> {
-        let client = S3Client::new(config).await?;
-        self.client = Some(client);
-        Ok(())
+    pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<String>> {
+        use futures::stream::{self, StreamExt};
+
+        let results = stream::iter(files)
+            .map(|file| self.upload_with_retry(file))
+            .buffer_unordered(self.parallel_limit)
+            .collect::<Vec<_>>()
+            .await;
+
+        results.into_iter().collect()
     }
 
-    pub fn is_initialized(&self) -> bool {
-        self.client.is_some()
+    async fn upload_with_retry(&self, file: PathBuf) -> Result<String> {
+        let mut attempts = 0;
+        loop {
+            match self.upload_with_progress(file.clone()).await {
+                Ok(url) => return Ok(url),
+                Err(e) if attempts < self.max_retries => {
+                    attempts += 1;
+                    let delay_secs = 2_u64.pow(attempts);
+                    tokio::time::sleep(Duration::from_secs(delay_secs)).await;
+                }
+                Err(e) => {
+                    let file_id = Uuid::new_v4().to_string();
+                    let filename = file
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("unknown")
+                        .to_string();
+                    
+                    let _ = self.progress_tx.send(UploadProgress {
+                        file_id,
+                        filename,
+                        bytes_uploaded: 0,
+                        total_bytes: 0,
+                        status: UploadStatus::Failed(e.to_string()),
+                    });
+                    
+                    return Err(e);
+                }
+            }
+        }
     }
 
-    pub async fn upload(&self, local_path: &Path, remote_key: &str) -> Result<String> {
-        let client = self.client.as_ref()
-            .ok_or_else(|| anyhow::anyhow!("S3Client not initialized"))?;
-        client.upload_file(local_path, remote_key).await
-    }
-}
+    async fn upload_with_progress(&self, file: PathBuf) -> Result<String> {
+        let file_id = Uuid::new_v4().to_string();
+        let filename = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?
+            .to_string();
 
-impl Default for UploadManager {
-    fn default() -> Self {
-        Self::new()
+        let total_bytes = tokio::fs::metadata(&file)
+            .await
+            .with_context(|| format!("Failed to get file metadata: {}", file.display()))?
+            .len();
+
+        self.progress_tx
+            .send(UploadProgress {
+                file_id: file_id.clone(),
+                filename: filename.clone(),
+                bytes_uploaded: 0,
+                total_bytes,
+                status: UploadStatus::Queued,
+            })
+            .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
+
+        self.progress_tx
+            .send(UploadProgress {
+                file_id: file_id.clone(),
+                filename: filename.clone(),
+                bytes_uploaded: 0,
+                total_bytes,
+                status: UploadStatus::Uploading,
+            })
+            .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
+
+        let url = self.s3_client.upload_file_auto(&file, 5, 5).await?;
+
+        self.progress_tx
+            .send(UploadProgress {
+                file_id,
+                filename,
+                bytes_uploaded: total_bytes,
+                total_bytes,
+                status: UploadStatus::Completed,
+            })
+            .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
+
+        Ok(url)
     }
 }
 
@@ -387,5 +494,65 @@ mod tests {
         
         let exact_file_size = 5 * 1024 * 1024;
         assert!(exact_file_size >= threshold_bytes);
+    }
+
+    #[test]
+    fn test_upload_progress_structure() {
+        let progress = UploadProgress {
+            file_id: "test-id".to_string(),
+            filename: "test.txt".to_string(),
+            bytes_uploaded: 1024,
+            total_bytes: 2048,
+            status: UploadStatus::Uploading,
+        };
+
+        assert_eq!(progress.file_id, "test-id");
+        assert_eq!(progress.filename, "test.txt");
+        assert_eq!(progress.bytes_uploaded, 1024);
+        assert_eq!(progress.total_bytes, 2048);
+        assert_eq!(progress.status, UploadStatus::Uploading);
+    }
+
+    #[test]
+    fn test_upload_status_variants() {
+        let queued = UploadStatus::Queued;
+        let uploading = UploadStatus::Uploading;
+        let completed = UploadStatus::Completed;
+        let failed = UploadStatus::Failed("error".to_string());
+
+        assert_eq!(queued, UploadStatus::Queued);
+        assert_eq!(uploading, UploadStatus::Uploading);
+        assert_eq!(completed, UploadStatus::Completed);
+        
+        match failed {
+            UploadStatus::Failed(msg) => assert_eq!(msg, "error"),
+            _ => panic!("Expected Failed status"),
+        }
+    }
+
+    #[test]
+    fn test_upload_status_clone() {
+        let status1 = UploadStatus::Failed("network error".to_string());
+        let status2 = status1.clone();
+
+        match (status1, status2) {
+            (UploadStatus::Failed(msg1), UploadStatus::Failed(msg2)) => {
+                assert_eq!(msg1, msg2);
+            }
+            _ => panic!("Expected Failed status"),
+        }
+    }
+
+    #[test]
+    fn test_exponential_backoff_calculation() {
+        for attempts in 1..=3 {
+            let delay_secs = 2_u64.pow(attempts);
+            match attempts {
+                1 => assert_eq!(delay_secs, 2),
+                2 => assert_eq!(delay_secs, 4),
+                3 => assert_eq!(delay_secs, 8),
+                _ => {}
+            }
+        }
     }
 }
