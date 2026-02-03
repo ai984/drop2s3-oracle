@@ -15,10 +15,23 @@ pub struct S3Client {
 
 impl S3Client {
     pub async fn new(config: &Config) -> Result<Self> {
-        let access_key = crypto::decrypt(&config.oracle.access_key)
-            .context("Failed to decrypt access_key")?;
-        let secret_key = crypto::decrypt(&config.oracle.secret_key)
-            .context("Failed to decrypt secret_key")?;
+        let access_key = if config.app.portable {
+            // Portable mode: use credentials as-is (plain text)
+            config.oracle.access_key.clone()
+        } else {
+            // Encrypted mode: decrypt with DPAPI
+            crypto::decrypt(&config.oracle.access_key)
+                .context("Failed to decrypt access_key")?
+        };
+
+        let secret_key = if config.app.portable {
+            // Portable mode: use credentials as-is (plain text)
+            config.oracle.secret_key.clone()
+        } else {
+            // Encrypted mode: decrypt with DPAPI
+            crypto::decrypt(&config.oracle.secret_key)
+                .context("Failed to decrypt secret_key")?
+        };
 
         let credentials = Credentials::new(
             Some(&access_key),

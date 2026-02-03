@@ -26,6 +26,8 @@ pub struct OracleConfig {
 pub struct AppConfig {
     pub auto_copy_link: bool,
     pub auto_start: bool,
+    #[serde(default)]
+    pub portable: bool,
 }
 
 /// Advanced upload configuration
@@ -78,6 +80,7 @@ region = "eu-frankfurt-1"
 [app]
 auto_copy_link = true
 auto_start = false
+# portable = false  # Set to true to disable DPAPI encryption (allows moving config between computers)
 
 [advanced]
 parallel_uploads = 3
