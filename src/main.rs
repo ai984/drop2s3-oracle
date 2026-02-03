@@ -2,6 +2,7 @@ mod config;
 mod crypto;
 mod history;
 mod logging;
+mod startup;
 mod tray;
 mod ui;
 mod update;
