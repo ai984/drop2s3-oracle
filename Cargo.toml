@@ -55,6 +55,9 @@ rust-s3 = { version = "0.37", default-features = false, features = ["tokio-nativ
 # Clipboard
 arboard = "3.3"
 
+# Image processing
+image = "0.24"
+
 # Security
 zeroize = "1.7"
 base64 = "0.21"

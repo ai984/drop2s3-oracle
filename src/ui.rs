@@ -283,6 +283,49 @@ impl eframe::App for DropZoneApp {
             });
         }
 
+        let ctrl_v_pressed = ctx.input(|i| i.key_pressed(egui::Key::V) && i.modifiers.ctrl);
+        if ctrl_v_pressed {
+            tracing::info!("Ctrl+V pressed, attempting to paste image from clipboard");
+            match arboard::Clipboard::new() {
+                Ok(mut clipboard) => {
+                    match clipboard.get_image() {
+                        Ok(image_data) => {
+                            let filename = generate_screenshot_filename();
+                            tracing::info!("Image data retrieved from clipboard: {}", filename);
+                            
+                            match save_image_to_temp(&image_data, &filename) {
+                                Ok(temp_path) => {
+                                    tracing::info!("Image saved to temp file: {}", temp_path.display());
+                                    let manager = self.upload_manager.clone();
+                                    tokio::spawn(async move {
+                                        match manager.upload_files(vec![temp_path.clone()]).await {
+                                            Ok(urls) => {
+                                                tracing::info!("Screenshot upload completed: {}", urls.join(", "));
+                                                let _ = std::fs::remove_file(&temp_path);
+                                            }
+                                            Err(e) => {
+                                                tracing::error!("Screenshot upload failed: {}", e);
+                                                let _ = std::fs::remove_file(&temp_path);
+                                            }
+                                        }
+                                    });
+                                }
+                                Err(e) => {
+                                    tracing::error!("Failed to save image to temp file: {}", e);
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            tracing::warn!("Clipboard does not contain image data: {}", e);
+                        }
+                    }
+                }
+                Err(e) => {
+                    tracing::error!("Failed to access clipboard: {}", e);
+                }
+            }
+        }
+
         let is_hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
 
         egui::CentralPanel::default().show(ctx, |ui| {
@@ -326,4 +369,26 @@ fn open_url_in_browser(url: &str) -> Result<()> {
     }
 
     Ok(())
+}
+
+fn generate_screenshot_filename() -> String {
+    let now = chrono::Local::now();
+    format!("screenshot_{}.png", now.format("%Y-%m-%d_%H%M%S"))
+}
+
+fn save_image_to_temp(image_data: &arboard::ImageData, filename: &str) -> Result<PathBuf> {
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(filename);
+    
+    let image = image::RgbaImage::from_raw(
+        image_data.width as u32,
+        image_data.height as u32,
+        image_data.bytes.to_vec(),
+    )
+    .context("Failed to create image from clipboard data")?;
+    
+    image.save(&temp_path)
+        .context("Failed to save image to temp file")?;
+    
+    Ok(temp_path)
 }
