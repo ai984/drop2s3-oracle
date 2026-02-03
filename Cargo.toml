@@ -35,6 +35,7 @@ windows = { version = "0.62", features = [
     "Win32_System_Memory",
     "Win32_System_Com",
     "Win32_System_Console",
+    "Win32_UI_WindowsAndMessaging",
 ] }
 winreg = "0.55"
 

@@ -107,14 +107,16 @@ impl eframe::App for DropZoneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         if !self.window_positioned {
             self.window_positioned = true;
-            let screen = ctx.input(|i| i.viewport_rect());
-            let window_size = egui::vec2(300.0, 400.0);
-            let margin = 20.0;
-            let pos = egui::pos2(
-                screen.max.x - window_size.x - margin,
-                screen.max.y - window_size.y - margin - 40.0,
-            );
-            ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            if let Some((screen_w, screen_h)) = get_screen_size() {
+                let window_size = egui::vec2(300.0, 400.0);
+                let margin = 20.0;
+                let taskbar_height = 48.0;
+                let pos = egui::pos2(
+                    screen_w - window_size.x - margin,
+                    screen_h - window_size.y - margin - taskbar_height,
+                );
+                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
+            }
         }
 
         if let Some(event) = TrayManager::poll_tray_event() {
@@ -128,8 +130,7 @@ impl eframe::App for DropZoneApp {
 
             match action {
                 MenuAction::Quit => {
-                    self.should_exit = true;
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+                    std::process::exit(0);
                 }
                 MenuAction::ShowWindow => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
@@ -392,4 +393,21 @@ fn save_image_to_temp(image_data: &arboard::ImageData, filename: &str) -> Result
         .context("Failed to save image to temp file")?;
     
     Ok(temp_path)
+}
+
+#[cfg(target_os = "windows")]
+fn get_screen_size() -> Option<(f32, f32)> {
+    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
+    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    if width > 0 && height > 0 {
+        Some((width as f32, height as f32))
+    } else {
+        None
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+fn get_screen_size() -> Option<(f32, f32)> {
+    None
 }

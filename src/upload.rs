@@ -199,12 +199,7 @@ impl S3Client {
     }
 
     fn get_public_url(&self, key: &str) -> String {
-        format!(
-            "{}/{}/{}",
-            self.bucket.url(),
-            self.bucket.name(),
-            key
-        )
+        format!("{}/{}", self.bucket.url(), key)
     }
 }
 
