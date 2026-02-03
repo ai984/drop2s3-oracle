@@ -1,12 +1,19 @@
 use anyhow::{Context, Result};
 use eframe::egui;
+use std::path::PathBuf;
+use std::sync::Arc;
 
+use crate::config::Config;
 use crate::tray::{MenuAction, TrayManager};
+use crate::upload::{S3Client, UploadManager, UploadProgress};
 
 pub struct UiManager;
 
 impl UiManager {
     pub fn run() -> Result<()> {
+        let (upload_manager, progress_rx, cancel_token) = initialize_upload_manager()?;
+        let upload_manager = Arc::new(upload_manager);
+
         let tray_manager = TrayManager::new()
             .context("Failed to create system tray")?;
 
@@ -26,6 +33,9 @@ impl UiManager {
             Box::new(move |_cc| {
                 Box::new(DropZoneApp {
                     tray_manager,
+                    upload_manager,
+                    progress_rx,
+                    cancel_token,
                 })
             }),
         )
@@ -35,8 +45,39 @@ impl UiManager {
     }
 }
 
+fn initialize_upload_manager() -> Result<(
+    UploadManager,
+    tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
+    tokio_util::sync::CancellationToken,
+)> {
+    let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+
+    let config = Config::load(std::path::Path::new("config.toml"))
+        .context("Failed to load config")?;
+
+    let s3_client = rt
+        .block_on(S3Client::new(&config))
+        .context("Failed to create S3 client")?;
+
+    let (upload_manager, progress_rx, cancel_token) = UploadManager::new(
+        s3_client,
+        config.advanced.parallel_uploads as usize,
+        3,
+    );
+
+    // Runtime must stay alive for tokio::spawn to work in DropZoneApp
+    Box::leak(Box::new(rt));
+
+    Ok((upload_manager, progress_rx, cancel_token))
+}
+
 struct DropZoneApp {
     tray_manager: TrayManager,
+    upload_manager: Arc<UploadManager>,
+    #[allow(dead_code)]
+    progress_rx: tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
+    #[allow(dead_code)]
+    cancel_token: tokio_util::sync::CancellationToken,
 }
 
 impl eframe::App for DropZoneApp {
@@ -67,12 +108,51 @@ impl eframe::App for DropZoneApp {
             }
         }
 
+        let dropped_files: Vec<PathBuf> = ctx.input(|i| {
+            i.raw
+                .dropped_files
+                .iter()
+                .filter_map(|f| f.path.as_ref())
+                .filter(|p| p.is_file())
+                .cloned()
+                .collect()
+        });
+
+        if !dropped_files.is_empty() {
+            tracing::info!("Files dropped: {} files", dropped_files.len());
+            let manager = self.upload_manager.clone();
+            tokio::spawn(async move {
+                match manager.upload_files(dropped_files).await {
+                    Ok(urls) => {
+                        tracing::info!("Upload completed: {} files", urls.len());
+                        for url in urls {
+                            tracing::info!("  - {}", url);
+                        }
+                    }
+                    Err(e) => {
+                        tracing::error!("Upload failed: {}", e);
+                    }
+                }
+            });
+        }
+
+        let is_hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
+
         egui::CentralPanel::default().show(ctx, |ui| {
+            if is_hovering {
+                ui.visuals_mut().widgets.noninteractive.bg_fill =
+                    egui::Color32::from_rgb(100, 180, 100);
+            }
+
             ui.vertical_centered(|ui| {
                 ui.add_space(80.0);
                 ui.heading("☁️");
                 ui.add_space(20.0);
-                ui.label("Upuść plik");
+                if is_hovering {
+                    ui.label("⬇️ Upuść tutaj");
+                } else {
+                    ui.label("Upuść plik");
+                }
             });
         });
 
