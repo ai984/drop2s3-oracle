@@ -1,7 +1,10 @@
+#![allow(dead_code)]
+
 mod config;
-mod crypto;
+mod dpapi_crypto;
 mod history;
 mod logging;
+mod portable_crypto;
 mod startup;
 mod tray;
 mod ui;

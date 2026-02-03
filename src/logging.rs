@@ -20,7 +20,7 @@ pub fn init_logging() -> Result<()> {
         .with_level(true)
         .with_thread_ids(false)
         .with_thread_names(false)
-        .with_timer(fmt::time::SystemTime::default());
+        .with_timer(fmt::time::SystemTime);
 
     let env_filter = EnvFilter::try_from_default_env()
         .unwrap_or_else(|_| EnvFilter::new("info,drop2s3=info"));

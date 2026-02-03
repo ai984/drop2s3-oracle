@@ -4,6 +4,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use anyhow::Result;
 
+#[allow(dead_code)]
 const MAX_ENTRIES: usize = 5;
 const MAX_FILE_SIZE: u64 = 1_048_576; // 1 MB
 
@@ -34,7 +35,7 @@ impl History {
         Ok(history)
     }
 
-    /// Adds a new entry to history, maintaining FIFO order and size limits
+    #[allow(dead_code)]
     pub fn add(&mut self, entry: HistoryEntry) -> Result<()> {
         // Add to front (most recent first)
         self.entries.insert(0, entry);
@@ -54,7 +55,7 @@ impl History {
         self.entries.clone()
     }
 
-    /// Clears all history entries and saves to disk
+    #[allow(dead_code)]
     pub fn clear(&mut self) -> Result<()> {
         self.entries.clear();
         self.save_to_disk()?;

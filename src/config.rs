@@ -2,6 +2,7 @@ use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
+use crate::portable_crypto::EncryptedCredentials;
 
 /// Main configuration structure matching spec section 5.3
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -9,6 +10,8 @@ pub struct Config {
     pub oracle: OracleConfig,
     pub app: AppConfig,
     pub advanced: AdvancedConfig,
+    #[serde(default)]
+    pub credentials: Option<EncryptedCredentials>,
 }
 
 /// Oracle Cloud Object Storage configuration
@@ -36,6 +39,19 @@ pub struct AdvancedConfig {
     pub parallel_uploads: u32,
     pub multipart_threshold_mb: u32,
     pub multipart_chunk_mb: u32,
+}
+
+/// Migration state for credentials
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MigrationKind {
+    /// Already using new encrypted format
+    NoMigration,
+    /// Has DPAPI-encrypted credentials (Windows-only, non-portable)
+    FromDpapi,
+    /// Has plaintext credentials (old portable mode)
+    FromPlaintext,
+    /// No credentials configured yet
+    Fresh,
 }
 
 impl Config {
@@ -68,6 +84,7 @@ impl Config {
     /// # Returns
     /// * `Ok(())` - Template created successfully
     /// * `Err` - Failed to write file
+    #[allow(dead_code)]
     pub fn create_template<P: AsRef<Path>>(path: P) -> Result<()> {
         let path = path.as_ref();
         let template = r#"[oracle]
@@ -80,7 +97,12 @@ region = "eu-frankfurt-1"
 [app]
 auto_copy_link = true
 auto_start = false
-# portable = false  # Set to true to disable DPAPI encryption (allows moving config between computers)
+# portable = false  # DEPRECATED: Use new encrypted credentials format instead
+
+# New encrypted credentials format (portable across machines):
+# [credentials]
+# version = 1
+# data = "encrypted_base64_string_here"
 
 [advanced]
 parallel_uploads = 3
@@ -92,6 +114,41 @@ multipart_chunk_mb = 5
             .with_context(|| format!("Failed to write config template: {}", path.display()))?;
 
         Ok(())
+    }
+
+    pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        let path = path.as_ref();
+        let content = toml::to_string_pretty(self)
+            .context("Failed to serialize config to TOML")?;
+        
+        fs::write(path, content)
+            .with_context(|| format!("Failed to write config file: {}", path.display()))?;
+        
+        Ok(())
+    }
+
+    /// Detect what kind of credential migration is needed
+    pub fn needs_migration(&self) -> MigrationKind {
+        // If we have new encrypted credentials, no migration needed
+        if self.credentials.is_some() {
+            return MigrationKind::NoMigration;
+        }
+        
+        // Check if old-style credentials exist
+        let has_access_key = !self.oracle.access_key.trim().is_empty();
+        let has_secret_key = !self.oracle.secret_key.trim().is_empty();
+        
+        if !has_access_key && !has_secret_key {
+            return MigrationKind::Fresh;
+        }
+        
+        // If portable mode was enabled, credentials were stored in plaintext
+        if self.app.portable {
+            return MigrationKind::FromPlaintext;
+        }
+        
+        // Otherwise they were DPAPI encrypted
+        MigrationKind::FromDpapi
     }
 
     /// Validate required fields are non-empty

@@ -16,6 +16,7 @@ use zeroize::Zeroize;
 ///
 /// # Errors
 /// Returns error if DPAPI encryption fails or Base64 encoding fails.
+#[allow(dead_code)]
 pub fn encrypt(plaintext: &str) -> Result<String> {
     if plaintext.is_empty() {
         return Err(anyhow::anyhow!("Cannot encrypt empty string"));

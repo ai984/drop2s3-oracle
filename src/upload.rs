@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::crypto;
+use crate::dpapi_crypto;
 
 pub struct S3Client {
     bucket: Box<Bucket>,
@@ -16,26 +16,30 @@ pub struct S3Client {
 impl S3Client {
     pub async fn new(config: &Config) -> Result<Self> {
         let access_key = if config.app.portable {
-            // Portable mode: use credentials as-is (plain text)
             config.oracle.access_key.clone()
         } else {
-            // Encrypted mode: decrypt with DPAPI
-            crypto::decrypt(&config.oracle.access_key)
+            dpapi_crypto::decrypt(&config.oracle.access_key)
                 .context("Failed to decrypt access_key")?
         };
 
         let secret_key = if config.app.portable {
-            // Portable mode: use credentials as-is (plain text)
             config.oracle.secret_key.clone()
         } else {
-            // Encrypted mode: decrypt with DPAPI
-            crypto::decrypt(&config.oracle.secret_key)
+            dpapi_crypto::decrypt(&config.oracle.secret_key)
                 .context("Failed to decrypt secret_key")?
         };
 
+        Self::new_with_plaintext(config, &access_key, &secret_key).await
+    }
+
+    pub async fn new_with_plaintext(
+        config: &Config,
+        access_key: &str,
+        secret_key: &str,
+    ) -> Result<Self> {
         let credentials = Credentials::new(
-            Some(&access_key),
-            Some(&secret_key),
+            Some(access_key),
+            Some(secret_key),
             None,
             None,
             None,
@@ -54,6 +58,7 @@ impl S3Client {
         Ok(Self { bucket })
     }
 
+    #[allow(dead_code)]
     pub async fn test_connection(&self) -> Result<()> {
         self.bucket
             .list("/".to_string(), Some("/".to_string()))
@@ -62,6 +67,7 @@ impl S3Client {
         Ok(())
     }
 
+    #[allow(dead_code)]
     pub async fn upload_file(&self, local_path: &Path, remote_key: &str) -> Result<String> {
         let content = tokio::fs::read(local_path)
             .await
@@ -105,6 +111,7 @@ impl S3Client {
         Ok(url)
     }
 
+    #[allow(dead_code)]
     pub async fn upload_bytes(&self, data: &[u8], remote_key: &str, content_type: &str) -> Result<String> {
         self.bucket
             .put_object_with_content_type(remote_key, data, content_type)
@@ -217,9 +224,9 @@ pub enum UploadStatus {
     Cancelled,
 }
 
-/// Progress information for a single file upload
 #[derive(Debug, Clone)]
 pub struct UploadProgress {
+    #[allow(dead_code)]
     pub file_id: String,
     pub filename: String,
     pub bytes_uploaded: u64,
@@ -257,6 +264,7 @@ impl UploadManager {
         )
     }
 
+    #[allow(dead_code)]
     pub fn cancel(&self) {
         self.cancel_token.cancel();
     }
@@ -384,7 +392,7 @@ impl UploadManager {
         Ok(url)
     }
 
-    /// Upload entire folder recursively, preserving directory structure
+    #[allow(dead_code)]
     pub async fn upload_folder<P: AsRef<Path>>(&self, folder_path: P) -> Result<Vec<String>> {
         use walkdir::WalkDir;
 
@@ -419,7 +427,7 @@ impl UploadManager {
             .await
     }
 
-    /// Upload files preserving their relative paths under a base folder name
+    #[allow(dead_code)]
     async fn upload_files_with_structure(
         &self,
         files: Vec<PathBuf>,

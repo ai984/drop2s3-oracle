@@ -1,21 +1,26 @@
 use anyhow::Result;
 use serde::Deserialize;
 
+#[allow(dead_code)]
 const GITHUB_REPO: &str = "ai984/drop2s3-oracle";
+#[allow(dead_code)]
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
     assets: Vec<Asset>,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Asset {
     name: String,
     browser_download_url: String,
 }
 
+#[allow(dead_code)]
 pub struct UpdateManager {
     client: reqwest::Client,
 }
