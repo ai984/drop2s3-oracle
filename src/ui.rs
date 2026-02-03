@@ -47,7 +47,7 @@ impl UiManager {
             "Drop2S3",
             options,
             Box::new(move |_cc| {
-                Box::new(DropZoneApp {
+                Ok(Box::new(DropZoneApp {
                     tray_manager,
                     upload_manager,
                     progress_rx,
@@ -58,7 +58,7 @@ impl UiManager {
                     is_uploading: false,
                     rt_handle: handle,
                     should_exit: false,
-                })
+                }))
             }),
         )
         .map_err(|e| anyhow::anyhow!("eframe error: {}", e))?;

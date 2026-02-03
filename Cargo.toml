@@ -7,73 +7,57 @@ description = "Minimalist Windows tray app for uploading files to Oracle Cloud O
 license = "MIT"
 
 [dependencies]
-# GUI Framework
-eframe = "0.27"
-egui = "0.27"
-winit = "0.29"
+eframe = "0.30"
+egui = "0.30"
 
-# System Tray
-tray-icon = "0.14"
+tray-icon = "0.19"
 
-# Async Runtime
-tokio = { version = "1.35", features = ["full"] }
+tokio = { version = "1", features = ["full"] }
 tokio-util = "0.7"
 futures = "0.3"
 
-# Serialization
-serde = { version = "1.0", features = ["derive"] }
-serde_json = "1.0"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
 toml = "0.8"
 
-# Utilities
-uuid = { version = "1.6", features = ["v4", "serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
 chrono = { version = "0.4", features = ["serde"] }
-walkdir = "2.4"
-directories = "5.0"
+walkdir = "2"
+directories = "6"
 
-# Logging
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
-# Windows-specific
-windows = { version = "0.54", features = [
+windows = { version = "0.58", features = [
     "Win32_Security_Cryptography",
     "Win32_Foundation",
     "Win32_System_Memory",
     "Win32_System_Com",
     "Win32_System_Console",
 ] }
-winreg = "0.52"
+winreg = "0.55"
 
-# HTTP & S3
-reqwest = { version = "0.11", features = ["json"] }
+reqwest = { version = "0.12", features = ["json"] }
 
-# S3-compatible storage (Oracle Cloud Object Storage)
-# Using tokio-native-tls for Windows MSVC compatibility
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-native-tls", "fail-on-err"] }
 
-# Clipboard
-arboard = "3.3"
+arboard = "3"
 
-# Image processing
-image = "0.24"
+image = "0.25"
 
-# Security
-zeroize = "1.7"
-base64 = "0.21"
+zeroize = "1"
+base64 = "0.22"
 chacha20poly1305 = "0.10"
 rand = "0.8"
 
-# Error handling
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = "1"
+thiserror = "2"
 
-# MIME type detection
-mime_guess = "2.0"
+mime_guess = "2"
 
 [dev-dependencies]
-tempfile = "3.8"
+tempfile = "3"
 
 [build-dependencies]
 winres = "0.1"
