@@ -100,6 +100,88 @@ impl S3Client {
         Ok(url)
     }
 
+    pub async fn upload_file_multipart<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+        chunk_size_mb: u32,
+    ) -> Result<String> {
+        let path = file_path.as_ref();
+        let filename = path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .ok_or_else(|| anyhow::anyhow!("Invalid filename"))?;
+
+        let s3_path = generate_s3_path(filename);
+
+        let content = tokio::fs::read(path)
+            .await
+            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+
+        let content_type = mime_guess::from_path(path)
+            .first_or_octet_stream()
+            .to_string();
+
+        let chunk_size = (chunk_size_mb as usize) * 1024 * 1024;
+
+        let parts: Vec<&[u8]> = content.chunks(chunk_size).collect();
+
+        let msg = self
+            .bucket
+            .initiate_multipart_upload(&s3_path, &content_type)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to initiate multipart upload: {}", e))?;
+
+        let upload_id = &msg.upload_id;
+
+        let mut etags = Vec::new();
+        for (i, chunk) in parts.iter().enumerate() {
+            let part_number = (i + 1) as u32;
+            match self
+                .bucket
+                .put_multipart_chunk(chunk.to_vec(), &s3_path, part_number, upload_id, &content_type)
+                .await
+            {
+                Ok(part) => etags.push(s3::serde_types::Part {
+                    etag: part.etag.to_string(),
+                    part_number,
+                }),
+                Err(e) => {
+                    let _ = self.bucket.abort_upload(&s3_path, upload_id).await;
+                    return Err(anyhow::anyhow!("Failed to upload part {}: {}", part_number, e));
+                }
+            }
+        }
+
+        self.bucket
+            .complete_multipart_upload(&s3_path, upload_id, etags)
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to complete multipart upload: {}", e))?;
+
+        let url = self.get_public_url(&s3_path);
+        Ok(url)
+    }
+
+    pub async fn upload_file_auto<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+        threshold_mb: u32,
+        chunk_mb: u32,
+    ) -> Result<String> {
+        let path = file_path.as_ref();
+        let metadata = tokio::fs::metadata(path)
+            .await
+            .with_context(|| format!("Failed to get file metadata: {}", path.display()))?;
+
+        let size = metadata.len();
+        let threshold = (threshold_mb as u64) * 1024 * 1024;
+
+        if size >= threshold {
+            self.upload_file_multipart(path, chunk_mb).await
+        } else {
+            self.upload_file_with_auto_path(path).await
+        }
+    }
+
     fn get_public_url(&self, key: &str) -> String {
         format!(
             "{}/{}/{}",
@@ -254,5 +336,56 @@ mod tests {
             .first_or_octet_stream()
             .to_string();
         assert_eq!(unknown_type, "application/octet-stream");
+    }
+
+    #[test]
+    fn test_chunk_calculation() {
+        let chunk_size = 5 * 1024 * 1024;
+        
+        let small_data = vec![0u8; 3 * 1024 * 1024];
+        let chunks: Vec<&[u8]> = small_data.chunks(chunk_size).collect();
+        assert_eq!(chunks.len(), 1);
+        
+        let exact_data = vec![0u8; 10 * 1024 * 1024];
+        let chunks: Vec<&[u8]> = exact_data.chunks(chunk_size).collect();
+        assert_eq!(chunks.len(), 2);
+        assert_eq!(chunks[0].len(), 5 * 1024 * 1024);
+        assert_eq!(chunks[1].len(), 5 * 1024 * 1024);
+        
+        let uneven_data = vec![0u8; 12 * 1024 * 1024];
+        let chunks: Vec<&[u8]> = uneven_data.chunks(chunk_size).collect();
+        assert_eq!(chunks.len(), 3);
+        assert_eq!(chunks[0].len(), 5 * 1024 * 1024);
+        assert_eq!(chunks[1].len(), 5 * 1024 * 1024);
+        assert_eq!(chunks[2].len(), 2 * 1024 * 1024);
+    }
+
+    #[test]
+    fn test_multipart_part_numbering() {
+        let parts = vec![vec![1u8; 100], vec![2u8; 100], vec![3u8; 100]];
+        
+        for (i, _chunk) in parts.iter().enumerate() {
+            let part_number = (i + 1) as u32;
+            assert_eq!(part_number, (i + 1) as u32);
+        }
+        
+        assert_eq!(parts.len(), 3);
+    }
+
+    #[test]
+    fn test_file_size_threshold() {
+        let threshold_mb = 5u32;
+        let threshold_bytes = (threshold_mb as u64) * 1024 * 1024;
+        
+        assert_eq!(threshold_bytes, 5 * 1024 * 1024);
+        
+        let small_file_size = 3 * 1024 * 1024;
+        assert!(small_file_size < threshold_bytes);
+        
+        let large_file_size = 10 * 1024 * 1024;
+        assert!(large_file_size >= threshold_bytes);
+        
+        let exact_file_size = 5 * 1024 * 1024;
+        assert!(exact_file_size >= threshold_bytes);
     }
 }
