@@ -7,7 +7,7 @@ use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::Config;
-use crate::dpapi_crypto;
+use crate::portable_crypto;
 
 pub struct S3Client {
     bucket: Box<Bucket>,
@@ -15,19 +15,13 @@ pub struct S3Client {
 
 impl S3Client {
     pub async fn new(config: &Config) -> Result<Self> {
-        let access_key = if config.app.portable {
-            config.oracle.access_key.clone()
-        } else {
-            dpapi_crypto::decrypt(&config.oracle.access_key)
-                .context("Failed to decrypt access_key")?
-        };
+        let credentials = config
+            .credentials
+            .as_ref()
+            .context("No credentials configured. Run: drop2s3.exe --encrypt")?;
 
-        let secret_key = if config.app.portable {
-            config.oracle.secret_key.clone()
-        } else {
-            dpapi_crypto::decrypt(&config.oracle.secret_key)
-                .context("Failed to decrypt secret_key")?
-        };
+        let (access_key, secret_key) = portable_crypto::decrypt_credentials(credentials)
+            .context("Failed to decrypt credentials")?;
 
         Self::new_with_plaintext(config, &access_key, &secret_key).await
     }

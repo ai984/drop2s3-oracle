@@ -4,9 +4,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
-use crate::config::{Config, MigrationKind};
 use crate::history::History;
-use crate::portable_crypto;
 use crate::tray::{MenuAction, TrayManager};
 use crate::upload::{S3Client, UploadManager, UploadProgress};
 
@@ -14,7 +12,7 @@ pub struct UiManager;
 
 impl UiManager {
     pub fn run() -> Result<()> {
-        let (upload_manager, progress_rx, cancel_token, config, config_path) = initialize_upload_manager()?;
+        let (upload_manager, progress_rx, cancel_token) = initialize_upload_manager()?;
         let upload_manager = Arc::new(upload_manager);
 
         let tray_manager = TrayManager::new()
@@ -38,9 +36,6 @@ impl UiManager {
             "Drop2S3",
             options,
             Box::new(move |_cc| {
-                let needs_setup = config.needs_migration() == MigrationKind::Fresh;
-                let needs_unlock = config.needs_migration() == MigrationKind::NoMigration;
-                
                 Box::new(DropZoneApp {
                     tray_manager,
                     upload_manager,
@@ -50,20 +45,6 @@ impl UiManager {
                     history,
                     copy_feedback: None,
                     is_uploading: false,
-                    config,
-                    config_path,
-                    password_dialog_open: needs_unlock,
-                    password_input: String::new(),
-                    password_error: None,
-                    remember_password: true,
-                    unlocked_credentials: None,
-                    pending_upload: None,
-                    setup_dialog_open: needs_setup,
-                    setup_access_key: String::new(),
-                    setup_secret_key: String::new(),
-                    setup_password: String::new(),
-                    setup_password_confirm: String::new(),
-                    setup_error: None,
                 })
             }),
         )
@@ -77,13 +58,11 @@ fn initialize_upload_manager() -> Result<(
     UploadManager,
     tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
     tokio_util::sync::CancellationToken,
-    Config,
-    PathBuf,
 )> {
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
     let config_path = crate::utils::get_exe_dir().join("config.toml");
-    let config = Config::load(&config_path)
+    let config = crate::config::Config::load(&config_path)
         .context("Failed to load config")?;
 
     let s3_client = rt
@@ -96,10 +75,9 @@ fn initialize_upload_manager() -> Result<(
         3,
     );
 
-    // Runtime must stay alive for tokio::spawn to work in DropZoneApp
     Box::leak(Box::new(rt));
 
-    Ok((upload_manager, progress_rx, cancel_token, config, config_path))
+    Ok((upload_manager, progress_rx, cancel_token))
 }
 
 struct DropZoneApp {
@@ -111,28 +89,6 @@ struct DropZoneApp {
     history: History,
     copy_feedback: Option<(String, Instant)>,
     is_uploading: bool,
-    config: Config,
-    config_path: PathBuf,
-    
-    // Password dialog state
-    password_dialog_open: bool,
-    password_input: String,
-    password_error: Option<String>,
-    remember_password: bool,
-    
-    // Cached decrypted credentials (session only)
-    unlocked_credentials: Option<(String, String)>,
-    
-    // Pending upload to resume after unlock
-    pending_upload: Option<Vec<PathBuf>>,
-    
-    // Setup dialog state (first-time configuration)
-    setup_dialog_open: bool,
-    setup_access_key: String,
-    setup_secret_key: String,
-    setup_password: String,
-    setup_password_confirm: String,
-    setup_error: Option<String>,
 }
 
 impl eframe::App for DropZoneApp {
@@ -158,11 +114,6 @@ impl eframe::App for DropZoneApp {
                 }
                 MenuAction::ShowSettings => {
                     tracing::info!("Show settings action received (not implemented yet)");
-                }
-                MenuAction::Lock => {
-                    tracing::info!("Lock action received - clearing cached credentials");
-                    self.unlocked_credentials = None;
-                    self.password_input.clear();
                 }
                 MenuAction::None => {}
             }
@@ -244,169 +195,6 @@ impl eframe::App for DropZoneApp {
                             self.cancel_token.cancel();
                             tracing::info!("Upload cancelled by user");
                         }
-                    });
-                });
-        }
-
-        // Password unlock dialog
-        if self.password_dialog_open {
-            egui::Window::new("Hasło główne")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Wprowadź hasło główne:");
-                        ui.add_space(5.0);
-                        
-                        let response = ui.add(
-                            egui::TextEdit::singleline(&mut self.password_input)
-                                .password(true)
-                                .hint_text("Hasło...")
-                        );
-                        
-                        if self.password_input.is_empty() {
-                            response.request_focus();
-                        }
-                        
-                        ui.add_space(5.0);
-                        ui.checkbox(&mut self.remember_password, "Zapamiętaj na tę sesję");
-                        
-                        if let Some(error) = &self.password_error {
-                            ui.add_space(5.0);
-                            ui.colored_label(egui::Color32::RED, error);
-                        }
-                        
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            let enter_pressed = ui.input(|i| i.key_pressed(egui::Key::Enter));
-                            if ui.button("Odblokuj").clicked() || enter_pressed {
-                                if let Some(ref encrypted) = self.config.credentials {
-                                    match portable_crypto::decrypt_credentials(&self.password_input, encrypted) {
-                                        Ok((access_key, secret_key)) => {
-                                            tracing::info!("Credentials unlocked successfully");
-                                            self.unlocked_credentials = Some((access_key, secret_key));
-                                            self.password_dialog_open = false;
-                                            self.password_error = None;
-                                            self.password_input.clear();
-                                        }
-                                        Err(e) => {
-                                            tracing::warn!("Failed to decrypt credentials: {}", e);
-                                            self.password_error = Some("Nieprawidłowe hasło".to_string());
-                                        }
-                                    }
-                                } else {
-                                    self.password_error = Some("Brak zaszyfrowanych poświadczeń".to_string());
-                                }
-                            }
-                            
-                            if ui.button("Anuluj").clicked() {
-                                self.password_dialog_open = false;
-                                self.password_input.clear();
-                                self.password_error = None;
-                                self.pending_upload = None;
-                            }
-                        });
-                    });
-                });
-        }
-
-        // First-time credentials setup dialog
-        if self.setup_dialog_open {
-            egui::Window::new("Konfiguracja poświadczeń")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.vertical(|ui| {
-                        ui.label("Wprowadź dane dostępowe Oracle Cloud:");
-                        ui.add_space(10.0);
-                        
-                        ui.label("Access Key:");
-                        ui.add(egui::TextEdit::singleline(&mut self.setup_access_key)
-                            .hint_text("AKIAIOSFODNN7EXAMPLE"));
-                        
-                        ui.add_space(5.0);
-                        ui.label("Secret Key:");
-                        ui.add(egui::TextEdit::singleline(&mut self.setup_secret_key)
-                            .password(true)
-                            .hint_text("wJalrXUtnFEMI/K7MDENG..."));
-                        
-                        ui.add_space(10.0);
-                        ui.separator();
-                        ui.add_space(10.0);
-                        
-                        ui.label("Hasło główne (do szyfrowania):");
-                        ui.add(egui::TextEdit::singleline(&mut self.setup_password)
-                            .password(true)
-                            .hint_text("Silne hasło..."));
-                        
-                        ui.add_space(5.0);
-                        ui.label("Potwierdź hasło:");
-                        ui.add(egui::TextEdit::singleline(&mut self.setup_password_confirm)
-                            .password(true)
-                            .hint_text("Powtórz hasło..."));
-                        
-                        if let Some(error) = &self.setup_error {
-                            ui.add_space(5.0);
-                            ui.colored_label(egui::Color32::RED, error);
-                        }
-                        
-                        ui.add_space(10.0);
-                        ui.horizontal(|ui| {
-                            if ui.button("Zapisz").clicked() {
-                                if self.setup_access_key.trim().is_empty() {
-                                    self.setup_error = Some("Access Key nie może być pusty".to_string());
-                                } else if self.setup_secret_key.trim().is_empty() {
-                                    self.setup_error = Some("Secret Key nie może być pusty".to_string());
-                                } else if self.setup_password.len() < 8 {
-                                    self.setup_error = Some("Hasło musi mieć min. 8 znaków".to_string());
-                                } else if self.setup_password != self.setup_password_confirm {
-                                    self.setup_error = Some("Hasła nie są identyczne".to_string());
-                                } else {
-                                    match portable_crypto::encrypt_credentials(
-                                        &self.setup_password,
-                                        &self.setup_access_key,
-                                        &self.setup_secret_key,
-                                    ) {
-                                        Ok(encrypted) => {
-                                            tracing::info!("Credentials encrypted successfully");
-                                            self.config.credentials = Some(encrypted);
-                                            self.unlocked_credentials = Some((
-                                                self.setup_access_key.clone(),
-                                                self.setup_secret_key.clone(),
-                                            ));
-                                            
-                                            if let Err(e) = self.config.save(&self.config_path) {
-                                                tracing::error!("Failed to save config: {}", e);
-                                                self.setup_error = Some(format!("Błąd zapisu: {}", e));
-                                            } else {
-                                                tracing::info!("Config saved to {:?}", self.config_path);
-                                                self.setup_dialog_open = false;
-                                                self.setup_access_key.clear();
-                                                self.setup_secret_key.clear();
-                                                self.setup_password.clear();
-                                                self.setup_password_confirm.clear();
-                                                self.setup_error = None;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            tracing::error!("Failed to encrypt credentials: {}", e);
-                                            self.setup_error = Some(format!("Błąd szyfrowania: {}", e));
-                                        }
-                                    }
-                                }
-                            }
-                            
-                            if ui.button("Anuluj").clicked() {
-                                self.setup_dialog_open = false;
-                                self.setup_access_key.clear();
-                                self.setup_secret_key.clear();
-                                self.setup_password.clear();
-                                self.setup_password_confirm.clear();
-                                self.setup_error = None;
-                            }
-                        });
                     });
                 });
         }
@@ -578,25 +366,6 @@ impl eframe::App for DropZoneApp {
         }
 
         ctx.request_repaint();
-    }
-}
-
-impl DropZoneApp {
-    fn request_unlock(&mut self, pending_files: Vec<PathBuf>) -> bool {
-        if self.unlocked_credentials.is_some() {
-            return true;
-        }
-        
-        self.pending_upload = Some(pending_files);
-        self.password_dialog_open = true;
-        false
-    }
-    
-    #[allow(dead_code)]
-    fn lock_credentials(&mut self) {
-        self.unlocked_credentials = None;
-        self.password_input.clear();
-        tracing::info!("Credentials locked");
     }
 }
 

@@ -1,23 +1,40 @@
 use anyhow::{anyhow, Context, Result};
-use argon2::{Algorithm, Argon2, Params, Version};
 use chacha20poly1305::{
     aead::{Aead, KeyInit, OsRng},
     XChaCha20Poly1305,
 };
 use serde::{Deserialize, Serialize};
-use zeroize::Zeroize;
 
-const SALT_LEN: usize = 16;
-const NONCE_LEN: usize = 24; // XChaCha20 uses 24-byte nonce
+const NONCE_LEN: usize = 24;
 const KEY_LEN: usize = 32;
 
+const EMBEDDED_KEY_XOR: [u8; 32] = [
+    0xd7, 0x2a, 0x8f, 0x3e, 0x5b, 0xc1, 0x94, 0x6d,
+    0xe8, 0x17, 0xa3, 0x4c, 0x9f, 0x62, 0xd5, 0x28,
+    0x7b, 0xce, 0x41, 0x96, 0x0d, 0xfa, 0x53, 0xb8,
+    0x2f, 0x84, 0xe9, 0x16, 0x6b, 0xc0, 0x35, 0x8a,
+];
+
+const EMBEDDED_KEY_MASK: [u8; 32] = [
+    0xa4, 0x59, 0xfc, 0x4d, 0x28, 0xb2, 0xe7, 0x1e,
+    0x9b, 0x64, 0xd0, 0x3f, 0xec, 0x11, 0xa6, 0x5b,
+    0x08, 0xbd, 0x32, 0xe5, 0x7e, 0x89, 0x20, 0xcb,
+    0x5c, 0xf7, 0x9a, 0x65, 0x18, 0xb3, 0x46, 0xf9,
+];
+
+fn get_embedded_key() -> [u8; KEY_LEN] {
+    let mut key = [0u8; KEY_LEN];
+    for i in 0..KEY_LEN {
+        key[i] = EMBEDDED_KEY_XOR[i] ^ EMBEDDED_KEY_MASK[i];
+    }
+    key
+}
+
 /// Encrypted credentials stored in config.toml
-/// Format: base64(salt || nonce || ciphertext)
+/// Format: base64(nonce || ciphertext)
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EncryptedCredentials {
-    /// Version for future format migrations
     pub version: u8,
-    /// Base64 encoded: salt (16) || nonce (24) || ciphertext (variable)
     pub data: String,
 }
 
@@ -27,42 +44,16 @@ struct CredentialsPayload {
     secret_key: String,
 }
 
-/// Derive 32-byte key from password using Argon2id
-/// RFC 9106 "SECOND RECOMMENDED" params: 64 MiB, 3 iterations, 4 parallelism
-fn derive_key(password: &str, salt: &[u8]) -> Result<[u8; KEY_LEN]> {
-    let params = Params::new(65536, 3, 4, Some(KEY_LEN))
-        .map_err(|e| anyhow!("Invalid Argon2 params: {}", e))?;
-    
-    let argon2 = Argon2::new(Algorithm::Argon2id, Version::V0x13, params);
-    
-    let mut key = [0u8; KEY_LEN];
-    argon2
-        .hash_password_into(password.as_bytes(), salt, &mut key)
-        .map_err(|e| anyhow!("Key derivation failed: {}", e))?;
-    
-    Ok(key)
-}
-
-/// Encrypt credentials with password
-pub fn encrypt_credentials(
-    password: &str,
-    access_key: &str,
-    secret_key: &str,
-) -> Result<EncryptedCredentials> {
+/// Encrypt credentials with embedded key (for admin CLI tool)
+pub fn encrypt_credentials(access_key: &str, secret_key: &str) -> Result<EncryptedCredentials> {
     use rand::RngCore;
     
-    let mut salt = [0u8; SALT_LEN];
     let mut nonce_bytes = [0u8; NONCE_LEN];
-    OsRng.fill_bytes(&mut salt);
     OsRng.fill_bytes(&mut nonce_bytes);
     
-    let mut key = derive_key(password, &salt)?;
-    
+    let key = get_embedded_key();
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|e| anyhow!("Cipher creation failed: {}", e))?;
-    
-    // Zeroize key immediately
-    key.zeroize();
     
     let payload = CredentialsPayload {
         access_key: access_key.to_string(),
@@ -76,25 +67,20 @@ pub fn encrypt_credentials(
         .encrypt(nonce, plaintext.as_ref())
         .map_err(|e| anyhow!("Encryption failed: {}", e))?;
     
-    // Combine: salt || nonce || ciphertext
-    let mut combined = Vec::with_capacity(SALT_LEN + NONCE_LEN + ciphertext.len());
-    combined.extend_from_slice(&salt);
+    let mut combined = Vec::with_capacity(NONCE_LEN + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
     combined.extend_from_slice(&ciphertext);
     
     use base64::Engine;
     let data = base64::engine::general_purpose::STANDARD.encode(&combined);
     
-    Ok(EncryptedCredentials { version: 1, data })
+    Ok(EncryptedCredentials { version: 2, data })
 }
 
-/// Decrypt credentials with password
-pub fn decrypt_credentials(
-    password: &str,
-    encrypted: &EncryptedCredentials,
-) -> Result<(String, String)> {
-    if encrypted.version != 1 {
-        return Err(anyhow!("Unsupported credentials version: {}", encrypted.version));
+/// Decrypt credentials with embedded key
+pub fn decrypt_credentials(encrypted: &EncryptedCredentials) -> Result<(String, String)> {
+    if encrypted.version != 2 {
+        return Err(anyhow!("Unsupported credentials version: {} (expected 2)", encrypted.version));
     }
     
     use base64::Engine;
@@ -102,26 +88,21 @@ pub fn decrypt_credentials(
         .decode(&encrypted.data)
         .context("Invalid base64 in credentials")?;
     
-    if combined.len() < SALT_LEN + NONCE_LEN + 16 {
+    if combined.len() < NONCE_LEN + 16 {
         return Err(anyhow!("Encrypted data too short"));
     }
     
-    let salt = &combined[..SALT_LEN];
-    let nonce_bytes = &combined[SALT_LEN..SALT_LEN + NONCE_LEN];
-    let ciphertext = &combined[SALT_LEN + NONCE_LEN..];
+    let nonce_bytes = &combined[..NONCE_LEN];
+    let ciphertext = &combined[NONCE_LEN..];
     
-    let mut key = derive_key(password, salt)?;
-    
+    let key = get_embedded_key();
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
         .map_err(|e| anyhow!("Cipher creation failed: {}", e))?;
-    
-    // Zeroize key immediately
-    key.zeroize();
     
     let nonce = chacha20poly1305::XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
         .decrypt(nonce, ciphertext)
-        .map_err(|_| anyhow!("Decryption failed - wrong password or corrupted data"))?;
+        .map_err(|_| anyhow!("Decryption failed - corrupted data"))?;
     
     let payload: CredentialsPayload = serde_json::from_slice(&plaintext)
         .context("Failed to parse decrypted credentials")?;
@@ -135,37 +116,32 @@ mod tests {
     
     #[test]
     fn test_encrypt_decrypt_roundtrip() {
-        let password = "test_password_123!";
         let access_key = "AKIAIOSFODNN7EXAMPLE";
         let secret_key = "wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY";
         
-        let encrypted = encrypt_credentials(password, access_key, secret_key).unwrap();
-        let (dec_access, dec_secret) = decrypt_credentials(password, &encrypted).unwrap();
+        let encrypted = encrypt_credentials(access_key, secret_key).unwrap();
+        let (dec_access, dec_secret) = decrypt_credentials(&encrypted).unwrap();
         
         assert_eq!(access_key, dec_access);
         assert_eq!(secret_key, dec_secret);
     }
     
     #[test]
-    fn test_wrong_password_fails() {
-        let password = "correct_password";
-        let wrong_password = "wrong_password";
-        
-        let encrypted = encrypt_credentials(password, "key", "secret").unwrap();
-        let result = decrypt_credentials(wrong_password, &encrypted);
-        
-        assert!(result.is_err());
-    }
-    
-    #[test]
     fn test_different_encryptions_produce_different_output() {
-        let password = "test_password";
         let access_key = "key";
         let secret_key = "secret";
         
-        let encrypted1 = encrypt_credentials(password, access_key, secret_key).unwrap();
-        let encrypted2 = encrypt_credentials(password, access_key, secret_key).unwrap();
+        let encrypted1 = encrypt_credentials(access_key, secret_key).unwrap();
+        let encrypted2 = encrypt_credentials(access_key, secret_key).unwrap();
         
         assert_ne!(encrypted1.data, encrypted2.data);
+    }
+    
+    #[test]
+    fn test_embedded_key_consistency() {
+        let key1 = get_embedded_key();
+        let key2 = get_embedded_key();
+        assert_eq!(key1, key2);
+        assert_eq!(key1.len(), KEY_LEN);
     }
 }

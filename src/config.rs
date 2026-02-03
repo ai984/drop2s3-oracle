@@ -14,23 +14,21 @@ pub struct Config {
     pub credentials: Option<EncryptedCredentials>,
 }
 
-/// Oracle Cloud Object Storage configuration
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OracleConfig {
     pub endpoint: String,
     pub bucket: String,
-    pub access_key: String, // Will be encrypted by Task 5 (DPAPI)
-    pub secret_key: String, // Will be encrypted by Task 5 (DPAPI)
+    #[serde(default)]
+    pub access_key: String,
+    #[serde(default)]
+    pub secret_key: String,
     pub region: String,
 }
 
-/// Application behavior configuration
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct AppConfig {
     pub auto_copy_link: bool,
     pub auto_start: bool,
-    #[serde(default)]
-    pub portable: bool,
 }
 
 /// Advanced upload configuration
@@ -41,18 +39,7 @@ pub struct AdvancedConfig {
     pub multipart_chunk_mb: u32,
 }
 
-/// Migration state for credentials
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum MigrationKind {
-    /// Already using new encrypted format
-    NoMigration,
-    /// Has DPAPI-encrypted credentials (Windows-only, non-portable)
-    FromDpapi,
-    /// Has plaintext credentials (old portable mode)
-    FromPlaintext,
-    /// No credentials configured yet
-    Fresh,
-}
+
 
 impl Config {
     /// Load configuration from TOML file
@@ -90,19 +77,16 @@ impl Config {
         let template = r#"[oracle]
 endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
 bucket = "my-bucket"
-access_key = ""
-secret_key = ""
 region = "eu-frankfurt-1"
+
+[credentials]
+# Generate with: drop2s3.exe --encrypt
+version = 2
+data = "BASE64_ENCRYPTED_CREDENTIALS_HERE"
 
 [app]
 auto_copy_link = true
 auto_start = false
-# portable = false  # DEPRECATED: Use new encrypted credentials format instead
-
-# New encrypted credentials format (portable across machines):
-# [credentials]
-# version = 1
-# data = "encrypted_base64_string_here"
 
 [advanced]
 parallel_uploads = 3
@@ -127,28 +111,9 @@ multipart_chunk_mb = 5
         Ok(())
     }
 
-    /// Detect what kind of credential migration is needed
-    pub fn needs_migration(&self) -> MigrationKind {
-        // If we have new encrypted credentials, no migration needed
-        if self.credentials.is_some() {
-            return MigrationKind::NoMigration;
-        }
-        
-        // Check if old-style credentials exist
-        let has_access_key = !self.oracle.access_key.trim().is_empty();
-        let has_secret_key = !self.oracle.secret_key.trim().is_empty();
-        
-        if !has_access_key && !has_secret_key {
-            return MigrationKind::Fresh;
-        }
-        
-        // If portable mode was enabled, credentials were stored in plaintext
-        if self.app.portable {
-            return MigrationKind::FromPlaintext;
-        }
-        
-        // Otherwise they were DPAPI encrypted
-        MigrationKind::FromDpapi
+    /// Check if credentials are configured
+    pub fn has_credentials(&self) -> bool {
+        self.credentials.is_some()
     }
 
     /// Validate required fields are non-empty

@@ -5,14 +5,13 @@ use tray_icon::{
 };
 
 /// System tray manager for Drop2S3 application
-/// Provides tray icon with context menu: "Pokaż okno", "Ustawienia", "Zablokuj", "Zamknij"
+/// Provides tray icon with context menu: "Pokaż okno", "Ustawienia", "Zamknij"
 pub struct TrayManager {
     tray_icon: TrayIcon,
     #[allow(dead_code)]
     menu: Menu,
     show_item_id: MenuId,
     settings_item_id: MenuId,
-    lock_item_id: MenuId,
     quit_item_id: MenuId,
 }
 
@@ -26,20 +25,16 @@ impl TrayManager {
 
         let show_item = MenuItem::new("Pokaż okno", true, None);
         let settings_item = MenuItem::new("Ustawienia", true, None);
-        let lock_item = MenuItem::new("Zablokuj", true, None);
         let quit_item = MenuItem::new("Zamknij", true, None);
 
         let show_item_id = show_item.id().clone();
         let settings_item_id = settings_item.id().clone();
-        let lock_item_id = lock_item.id().clone();
         let quit_item_id = quit_item.id().clone();
 
         menu.append(&show_item)
             .context("Failed to add 'Pokaż okno' to menu")?;
         menu.append(&settings_item)
             .context("Failed to add 'Ustawienia' to menu")?;
-        menu.append(&lock_item)
-            .context("Failed to add 'Zablokuj' to menu")?;
         menu.append(&quit_item)
             .context("Failed to add 'Zamknij' to menu")?;
 
@@ -58,7 +53,6 @@ impl TrayManager {
             menu,
             show_item_id,
             settings_item_id,
-            lock_item_id,
             quit_item_id,
         })
     }
@@ -104,9 +98,6 @@ impl TrayManager {
         } else if event.id == self.settings_item_id {
             tracing::info!("Menu: Ustawienia clicked");
             MenuAction::ShowSettings
-        } else if event.id == self.lock_item_id {
-            tracing::info!("Menu: Zablokuj clicked");
-            MenuAction::Lock
         } else if event.id == self.quit_item_id {
             tracing::info!("Menu: Zamknij clicked");
             MenuAction::Quit
@@ -149,15 +140,9 @@ impl TrayManager {
 /// Actions triggered by menu items
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MenuAction {
-    /// Show main window
     ShowWindow,
-    /// Show settings dialog
     ShowSettings,
-    /// Lock application (clear cached credentials)
-    Lock,
-    /// Quit application
     Quit,
-    /// No action
     None,
 }
 
@@ -170,7 +155,6 @@ mod tests {
         let actions = [
             MenuAction::ShowWindow,
             MenuAction::ShowSettings,
-            MenuAction::Lock,
             MenuAction::Quit,
             MenuAction::None,
         ];
