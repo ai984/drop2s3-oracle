@@ -1,0 +1,61 @@
+[package]
+name = "drop2s3"
+version = "0.1.0"
+edition = "2021"
+authors = ["AI Assistant <ai@tl-systems.pl>"]
+description = "Minimalist Windows tray app for uploading files to Oracle Cloud Object Storage"
+license = "MIT"
+
+[dependencies]
+# GUI Framework
+eframe = "0.27"
+egui = "0.27"
+winit = "0.29"
+
+# System Tray
+tray-icon = "0.14"
+
+# Async Runtime
+tokio = { version = "1.35", features = ["full"] }
+
+# Serialization
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+toml = "0.8"
+
+# Utilities
+uuid = { version = "1.6", features = ["v4", "serde"] }
+chrono = { version = "0.4", features = ["serde"] }
+walkdir = "2.4"
+directories = "5.0"
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
+tracing-appender = "0.2"
+
+# Windows-specific
+windows = { version = "0.54", features = [
+    "Win32_Security_Cryptography",
+    "Win32_Foundation",
+    "Win32_System_Memory",
+] }
+winreg = "0.52"
+
+# HTTP
+reqwest = { version = "0.11", features = ["json"] }
+
+# Clipboard
+arboard = "3.3"
+
+# Security
+zeroize = "1.7"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"
+
+[profile.release]
+opt-level = 3
+lto = true
+codegen-units = 1

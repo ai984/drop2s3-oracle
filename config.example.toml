@@ -1,0 +1,15 @@
+[oracle]
+endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
+bucket = "my-bucket"
+access_key = ""
+secret_key = ""
+region = "eu-frankfurt-1"
+
+[app]
+auto_copy_link = true
+auto_start = false
+
+[advanced]
+parallel_uploads = 3
+multipart_threshold_mb = 5
+multipart_chunk_mb = 5
