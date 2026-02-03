@@ -24,3 +24,7 @@ history.json
 *.exe
 *.pdb
 .sisyphus*
+
+# Added by cargo
+
+/target
