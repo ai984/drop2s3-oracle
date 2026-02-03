@@ -19,7 +19,7 @@ pub fn load_icon(icon_type: IconType) -> Result<Icon> {
     let img = image::load_from_memory(ico_bytes)
         .context("Failed to decode icon")?;
     
-    let rgba = img.resize(32, 32, image::imageops::FilterType::Lanczos3).to_rgba8();
+    let rgba = img.resize_exact(64, 64, image::imageops::FilterType::Lanczos3).to_rgba8();
     let (width, height) = rgba.dimensions();
     
     Icon::from_rgba(rgba.into_raw(), width, height)

@@ -1,4 +1,5 @@
 #![allow(dead_code)]
+#![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
 mod dpapi_crypto;
@@ -17,6 +18,7 @@ fn main() -> anyhow::Result<()> {
     let args: Vec<String> = std::env::args().collect();
     
     if args.iter().any(|a| a == "--encrypt") {
+        attach_console();
         return run_encrypt_cli();
     }
 
@@ -29,6 +31,15 @@ fn main() -> anyhow::Result<()> {
     tracing::info!("Drop2S3 exiting");
     Ok(())
 }
+
+#[cfg(windows)]
+fn attach_console() {
+    use windows::Win32::System::Console::{AttachConsole, ATTACH_PARENT_PROCESS};
+    unsafe { let _ = AttachConsole(ATTACH_PARENT_PROCESS); }
+}
+
+#[cfg(not(windows))]
+fn attach_console() {}
 
 fn run_encrypt_cli() -> anyhow::Result<()> {
     use std::io::{self, Write};
