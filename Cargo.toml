@@ -43,8 +43,12 @@ windows = { version = "0.54", features = [
 ] }
 winreg = "0.52"
 
-# HTTP
+# HTTP & S3
 reqwest = { version = "0.11", features = ["json"] }
+
+# S3-compatible storage (Oracle Cloud Object Storage)
+# Using tokio-native-tls for Windows MSVC compatibility
+rust-s3 = { version = "0.37", default-features = false, features = ["tokio-native-tls", "fail-on-err"] }
 
 # Clipboard
 arboard = "3.3"
@@ -56,6 +60,9 @@ base64 = "0.21"
 # Error handling
 anyhow = "1.0"
 thiserror = "1.0"
+
+# MIME type detection
+mime_guess = "2.0"
 
 [dev-dependencies]
 tempfile = "3.8"
