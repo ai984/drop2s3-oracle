@@ -8,10 +8,10 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 /// Log format includes timestamps, levels, and targets.
 /// Filters out sensitive fields (access_key, secret_key, password).
 pub fn init_logging() -> Result<()> {
-    let logs_dir = "logs";
-    std::fs::create_dir_all(logs_dir)?;
+    let logs_dir = crate::utils::get_exe_dir().join("logs");
+    std::fs::create_dir_all(&logs_dir)?;
 
-    let file_appender = RollingFileAppender::new(Rotation::DAILY, logs_dir, "drop2s3.log");
+    let file_appender = RollingFileAppender::new(Rotation::DAILY, &logs_dir, "drop2s3.log");
 
     let fmt_layer = fmt::layer()
         .with_writer(file_appender)

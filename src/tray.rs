@@ -38,7 +38,8 @@ impl TrayManager {
         menu.append(&quit_item)
             .context("Failed to add 'Zamknij' to menu")?;
 
-        let icon = Self::load_icon("assets/icon.ico")?;
+        let icon_path = crate::utils::get_exe_dir().join("assets/icon.ico");
+        let icon = Self::load_icon(icon_path.to_str().unwrap_or("assets/icon.ico"))?;
 
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))

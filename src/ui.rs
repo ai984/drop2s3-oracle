@@ -19,10 +19,7 @@ impl UiManager {
         let tray_manager = TrayManager::new()
             .context("Failed to create system tray")?;
 
-        let history_path = std::env::current_exe()?
-            .parent()
-            .unwrap_or_else(|| std::path::Path::new("."))
-            .join("history.json");
+        let history_path = crate::utils::get_exe_dir().join("history.json");
         let history = History::new(&history_path)
             .context("Failed to load history")?;
 
@@ -65,7 +62,8 @@ fn initialize_upload_manager() -> Result<(
 )> {
     let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
 
-    let config = Config::load(std::path::Path::new("config.toml"))
+    let config_path = crate::utils::get_exe_dir().join("config.toml");
+    let config = Config::load(&config_path)
         .context("Failed to load config")?;
 
     let s3_client = rt
@@ -130,7 +128,8 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Uploading => {
                     if !self.is_uploading {
                         self.is_uploading = true;
-                        if let Err(e) = self.tray_manager.set_icon("assets/icon_uploading.ico") {
+                        let icon_path = crate::utils::get_exe_dir().join("assets/icon_uploading.ico");
+                        if let Err(e) = self.tray_manager.set_icon(icon_path.to_str().unwrap_or("assets/icon_uploading.ico")) {
                             tracing::error!("Failed to set uploading icon: {}", e);
                         }
                     }
@@ -139,7 +138,8 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
                     if self.is_uploading {
                         self.is_uploading = false;
-                        if let Err(e) = self.tray_manager.set_icon("assets/icon.ico") {
+                        let icon_path = crate::utils::get_exe_dir().join("assets/icon.ico");
+                        if let Err(e) = self.tray_manager.set_icon(icon_path.to_str().unwrap_or("assets/icon.ico")) {
                             tracing::error!("Failed to restore static icon: {}", e);
                         }
                     }
