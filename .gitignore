@@ -16,10 +16,11 @@ Cargo.lock
 Thumbs.db
 
 # App runtime files
-config.toml
+/config.toml
 history.json
 *.log
 
 # Build artifacts
 *.exe
 *.pdb
+.sisyphus*
