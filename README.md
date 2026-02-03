@@ -1,6 +1,6 @@
 # Drop2S3 ☁️
 
-> **Backend biblioteka** do przesyłania plików na Oracle Cloud Object Storage (GUI w trakcie implementacji)
+> Lekka aplikacja Windows do przesylania plikow na Oracle Cloud Object Storage
 
 [![Rust](https://img.shields.io/badge/Rust-1.75+-orange?logo=rust)](https://www.rust-lang.org/)
 [![Windows](https://img.shields.io/badge/Windows-10%2B-0078D6?logo=windows)](https://www.microsoft.com/windows)
@@ -11,12 +11,12 @@
 
 ## Co to jest?
 
-**Drop2S3** to lekka aplikacja działająca w zasobniku systemowym (system tray), która pozwala błyskawicznie przesyłać pliki do Oracle Cloud Object Storage przez przeciągnięcie i upuszczenie.
+**Drop2S3** to lekka aplikacja dzialajaca w zasobniku systemowym (system tray), ktora pozwala blyskawicznie przesylac pliki do Oracle Cloud Object Storage przez przeciagniecie i upuszczenie.
 
 ```
 ┌─────────────────────────────────────┐
 │                                     │
-│         Przeciągnij plik            │
+│         Przeciagnij plik            │
 │              tutaj                  │
 │                                     │
 │            ☁️ ↑                      │
@@ -39,131 +39,160 @@
 
 | Funkcja | Opis |
 |---------|------|
-| 🖱️ **Drag & Drop** | Przeciągnij pliki lub foldery |
+| 🖱️ **Drag & Drop** | Przeciagnij pliki lub foldery |
 | 📋 **Ctrl+V** | Wklej obrazy ze schowka (screenshoty) |
 | 🔗 **Szybkie kopiowanie** | Link automatycznie w schowku |
-| 📁 **Foldery** | Zachowuje strukturę katalogów |
-| 🔒 **Bezpieczne URL** | UUID w ścieżce + noindex |
-| ⚡ **Multipart upload** | Szybkie przesyłanie dużych plików |
+| 📁 **Foldery** | Zachowuje strukture katalogow |
+| 🔒 **Bezpieczne URL** | UUID w sciezce + noindex |
+| ⚡ **Multipart upload** | Szybkie przesylanie duzych plikow |
 | 🔄 **Auto-update** | Automatyczne aktualizacje z GitHub |
-| 🎨 **Dark/Light mode** | Dopasowuje się do systemu Windows |
+| 🎨 **Dark/Light mode** | Dopasowuje sie do systemu Windows |
 
 ---
 
 ## Instalacja
 
-### Opcja 1: Pobierz gotowy .exe
+### Dla administratora (pierwsza konfiguracja)
 
-1. Przejdź do [Releases](https://github.com/ai984/drop2s3-oracle/releases)
-2. Pobierz `Drop2S3.exe`
-3. Umieść w dowolnym folderze
-4. Uruchom i skonfiguruj
+1. Pobierz `Drop2S3.exe` z [Releases](https://github.com/ai984/drop2s3-oracle/releases)
+2. Zaszyfruj credentials (patrz sekcja ponizej)
+3. Utworz `config.toml` z zaszyfrowanymi danymi
+4. Rozdystrybuuj `Drop2S3.exe` + `config.toml` do uzytkownikow
 
-### Opcja 2: Kompilacja ze źródeł
+### Dla uzytkownika
 
-```bash
-# Wymagania: Rust 1.75+, Windows 10+
-git clone https://github.com/ai984/drop2s3-oracle.git
-cd drop2s3-oracle
-cargo build --release
-
-# Plik wykonywalny: target/release/Drop2S3.exe
-```
+1. Otrzymaj od administratora: `Drop2S3.exe` + `config.toml`
+2. Umiesc oba pliki w tym samym folderze
+3. Uruchom `Drop2S3.exe`
+4. Gotowe - aplikacja dziala w zasobniku systemowym
 
 ---
 
-## Konfiguracja
+## Pierwsza konfiguracja (Administrator)
 
-Przy pierwszym uruchomieniu aplikacja utworzy plik `config.toml` obok `.exe`:
+### Krok 1: Uzyskaj credentials Oracle Cloud
+
+1. Zaloguj sie do [Oracle Cloud Console](https://cloud.oracle.com/)
+2. Przejdz do **Identity & Security** → **Users** → Twoj uzytkownik
+3. Kliknij **Customer Secret Keys** → **Generate Secret Key**
+4. Zapisz **Access Key** i **Secret Key** (Secret Key pokazywany tylko raz!)
+
+### Krok 2: Zaszyfruj credentials
+
+Uruchom w konsoli:
+
+```cmd
+Drop2S3.exe --encrypt
+```
+
+Program zapyta o Access Key i Secret Key, a nastepnie wygeneruje zaszyfrowane dane:
+
+```
+Drop2S3 Credential Encryption Tool
+===================================
+
+Access Key: AKIAIOSFODNN7EXAMPLE
+Secret Key: wJalrXUtnFEMI/K7MDENG/bPxRfiCYEXAMPLEKEY
+
+Add this to your config.toml:
+------------------------------
+[credentials]
+version = 2
+data = "base64_zaszyfrowane_dane..."
+```
+
+### Krok 3: Utworz config.toml
 
 ```toml
 [oracle]
 endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
-bucket = "my-bucket"
-access_key = "twoj_access_key"
-secret_key = "twoj_secret_key"
+bucket = "nazwa-bucketa"
 region = "eu-frankfurt-1"
 
+[credentials]
+version = 2
+data = "TUTAJ_WKLEJ_ZASZYFROWANE_DANE_Z_KROKU_2"
+
 [app]
-auto_copy_link = true    # Automatycznie kopiuj link po uploadzie
-auto_start = false       # Uruchamiaj z Windows
+auto_copy_link = true
+auto_start = false
 
 [advanced]
-parallel_uploads = 3     # Ile plików jednocześnie
+parallel_uploads = 3
 multipart_threshold_mb = 5
 multipart_chunk_mb = 5
 ```
 
-### Jak uzyskać credentials Oracle Cloud?
+### Krok 4: Dystrybucja
 
-1. Zaloguj się do [Oracle Cloud Console](https://cloud.oracle.com/)
-2. Przejdź do **Identity & Security** → **Users** → Twój użytkownik
-3. Kliknij **Customer Secret Keys** → **Generate Secret Key**
-4. Skopiuj Access Key i Secret Key do `config.toml`
+Przekaz uzytkownikom tylko dwa pliki:
+- `Drop2S3.exe`
+- `config.toml`
 
-> ⚠️ **Uwaga**: Secret Key jest pokazywany tylko raz! Zapisz go bezpiecznie.
+> **Uwaga**: Credentials sa zaszyfrowane - nawet jesli ktos otworzy `config.toml`, nie zobaczy kluczy w postaci jawnej.
 
 ---
 
-## Użycie
+## Uzycie
 
 ### Podstawowe
 
-1. **Kliknij ikonę chmury** w zasobniku systemowym
-2. **Przeciągnij plik** do okna Drop Zone
+1. **Kliknij ikone chmury** w zasobniku systemowym
+2. **Przeciagnij plik** do okna Drop Zone
 3. **Link skopiowany** do schowka ✓
 
-### Skróty
+### Skroty
 
 | Akcja | Jak |
 |-------|-----|
-| Otwórz okno | Klik w ikonę tray |
-| Upload | Przeciągnij plik na okno lub ikonę tray |
+| Otworz okno | Klik w ikone tray |
+| Upload | Przeciagnij plik na okno |
 | Wklej screenshot | `Ctrl+V` gdy okno aktywne |
 | Kopiuj poprzedni link | Klik w element historii |
-| Otwórz w przeglądarce | Podwójny klik w historię |
+| Otworz w przegladarce | Podwojny klik w historie |
 
 ### Menu kontekstowe (prawy klik na tray)
 
-- **Pokaż okno** - otwiera Drop Zone
+- **Pokaz okno** - otwiera Drop Zone
 - **Ustawienia** - edycja konfiguracji
-- **Zamknij** - wyłącza aplikację
+- **Zamknij** - wylacza aplikacje
 
 ---
 
-## Bezpieczeństwo
+## Bezpieczenstwo
 
 | Zabezpieczenie | Opis |
 |----------------|------|
-| 🔐 **DPAPI** | Sekrety szyfrowane Windows Data Protection API |
-| 🎲 **UUID w URL** | 16-znakowy losowy identyfikator w ścieżce |
-| 🤖 **noindex** | Nagłówek X-Robots-Tag zapobiega indeksowaniu |
+| 🔐 **Szyfrowanie credentials** | XChaCha20-Poly1305 - credentials zaszyfrowane w config.toml |
+| 🎲 **UUID w URL** | 16-znakowy losowy identyfikator w sciezce |
+| 🤖 **noindex** | Naglowek X-Robots-Tag zapobiega indeksowaniu |
+| 📦 **Portable** | Ikony zaszyte w exe - tylko 2 pliki do dystrybucji |
 
-**Przykładowy URL:**
+**Przykladowy URL:**
 ```
 https://bucket.objectstorage.eu-frankfurt-1.oci.customer-oci.com/
   2026-02-03/a1b2c3d4e5f67890/faktura.pdf
   ^^^^^^^^^^ ^^^^^^^^^^^^^^^^ ^^^^^^^^^^^
   data       UUID (trudny     nazwa pliku
-             do zgadnięcia)
+             do zgadniecia)
 ```
 
 ---
 
-## Struktura plików
+## Struktura plikow
 
 ```
 📁 Drop2S3/
-├── 📄 Drop2S3.exe      # Aplikacja
-├── 📄 config.toml      # Konfiguracja (tworzony automatycznie)
-├── 📄 history.json     # Historia uploadów
-└── 📁 logs/            # Logi aplikacji
-    └── 📄 2026-02-03.log
+├── 📄 Drop2S3.exe      # Aplikacja (ikony zaszyte w srodku)
+├── 📄 config.toml      # Konfiguracja z zaszyfrowanymi credentials
+├── 📄 history.json     # Historia uploadow (tworzony automatycznie)
+└── 📁 logs/            # Logi aplikacji (tworzony automatycznie)
+    └── 📄 drop2s3.log.2026-02-03
 ```
 
 ---
 
-## Rozwój
+## Rozwoj
 
 ### Wymagania deweloperskie
 
@@ -196,18 +225,33 @@ cargo test
 
 - [x] Podstawowy upload drag & drop
 - [x] System tray z menu
-- [x] Historia plików
+- [x] Historia plikow
 - [x] Multipart upload
-- [ ] Wklejanie ze schowka (Ctrl+V)
-- [ ] Upload folderów z zachowaniem struktury
+- [x] Wklejanie ze schowka (Ctrl+V)
+- [x] Szyfrowanie credentials (portable)
+- [x] Ikony zaszyte w exe
+- [ ] Upload folderow z zachowaniem struktury
 - [ ] Auto-update z GitHub Releases
-- [ ] Obsługa wielu profili/bucketów
+- [ ] Obsluga wielu profili/bucketow
+
+---
+
+## Kompilacja ze zrodel
+
+```bash
+# Wymagania: Rust 1.75+, Windows 10+
+git clone https://github.com/ai984/drop2s3-oracle.git
+cd drop2s3-oracle
+cargo build --release
+
+# Plik wykonywalny: target/release/drop2s3.exe
+```
 
 ---
 
 ## Licencja
 
-[MIT](LICENSE) - rób co chcesz, ale bez gwarancji.
+[MIT](LICENSE) - rob co chcesz, ale bez gwarancji.
 
 ---
 
@@ -218,5 +262,5 @@ Stworzone z ☕ i 🦀
 ---
 
 <p align="center">
-  <sub>Jeśli Drop2S3 oszczędza Ci czas, zostaw ⭐ na GitHubie!</sub>
+  <sub>Jesli Drop2S3 oszczedza Ci czas, zostaw ⭐ na GitHubie!</sub>
 </p>
