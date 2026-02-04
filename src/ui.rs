@@ -194,6 +194,8 @@ impl eframe::App for DropZoneApp {
             }
         }
 
+        let is_visible = !ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        
         while let Ok(progress) = self.progress_rx.try_recv() {
             use crate::upload::UploadStatus;
             
@@ -233,6 +235,10 @@ impl eframe::App for DropZoneApp {
             }
         }
 
+        if !is_visible {
+            return self.handle_background_events(ctx);
+        }
+        
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Ok(state) = self.update_state.lock() {
                 match &*state {
@@ -477,14 +483,36 @@ impl eframe::App for DropZoneApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
+        self.schedule_repaint(ctx);
+    }
+}
+
+impl DropZoneApp {
+    fn handle_background_events(&mut self, ctx: &egui::Context) {
+        if ctx.input(|i| i.viewport().close_requested()) && !self.should_exit {
+            ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
+            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+        }
+        self.schedule_repaint(ctx);
+    }
+    
+    fn schedule_repaint(&self, ctx: &egui::Context) {
         let has_error = self.last_error.lock().map(|e| e.is_some()).unwrap_or(false);
         let is_updating = self
             .update_state
             .lock()
-            .map(|s| matches!(*s, UpdateState::Checking | UpdateState::Downloading))
+            .map(|s| matches!(*s, UpdateState::Downloading))
             .unwrap_or(false);
-        if self.is_uploading || self.copy_feedback.is_some() || has_error || is_updating {
-            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        let is_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        
+        if self.is_uploading || is_updating {
+            ctx.request_repaint_after(Duration::from_millis(100));
+        } else if self.copy_feedback.is_some() || has_error {
+            ctx.request_repaint_after(Duration::from_millis(500));
+        } else if is_minimized {
+            ctx.request_repaint_after(Duration::from_secs(5));
+        } else {
+            ctx.request_repaint_after(Duration::from_secs(1));
         }
     }
 }
