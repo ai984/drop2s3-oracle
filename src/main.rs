@@ -24,6 +24,11 @@ fn main() -> anyhow::Result<()> {
 
     logging::init_logging()?;
 
+    // Apply pending update if exists (from previous download)
+    if let Err(e) = update::UpdateManager::apply_update_on_restart() {
+        tracing::warn!("Failed to apply update: {}", e);
+    }
+
     tracing::info!("Drop2S3 starting...");
 
     ui::UiManager::run()?;

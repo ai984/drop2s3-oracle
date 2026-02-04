@@ -8,6 +8,7 @@ use tokio::runtime::Handle;
 use crate::embedded_icons::IconType;
 use crate::history::History;
 use crate::tray::{MenuAction, TrayManager};
+use crate::update::UpdateManager;
 use crate::upload::{S3Client, UploadManager, UploadProgress};
 
 pub struct UiManager;
@@ -60,6 +61,26 @@ impl UiManager {
             "Drop2S3",
             options,
             Box::new(move |_cc| {
+                let update_state = Arc::new(std::sync::Mutex::new(UpdateState::Checking));
+                
+                // Check for updates in background
+                let update_state_clone = update_state.clone();
+                handle.spawn(async move {
+                    let manager = UpdateManager::new();
+                    match manager.check_for_updates().await {
+                        Ok(Some(version)) => {
+                            if let Ok(mut state) = update_state_clone.lock() {
+                                *state = UpdateState::Available(version);
+                            }
+                        }
+                        Ok(None) | Err(_) => {
+                            if let Ok(mut state) = update_state_clone.lock() {
+                                *state = UpdateState::None;
+                            }
+                        }
+                    }
+                });
+
                 Ok(Box::new(DropZoneApp {
                     tray_manager,
                     upload_manager,
@@ -73,6 +94,7 @@ impl UiManager {
                     should_exit: false,
                     upload_started_at: None,
                     last_error: Arc::new(std::sync::Mutex::new(None)),
+                    update_state,
                 }))
             }),
         )
@@ -104,6 +126,15 @@ fn initialize_upload_manager(rt: &tokio::runtime::Runtime) -> Result<(
     Ok((upload_manager, progress_rx, cancel_token))
 }
 
+#[derive(Clone, PartialEq)]
+enum UpdateState {
+    Checking,
+    Available(String),
+    Downloading,
+    ReadyToInstall,
+    None,
+}
+
 struct DropZoneApp {
     tray_manager: TrayManager,
     upload_manager: Arc<UploadManager>,
@@ -116,8 +147,8 @@ struct DropZoneApp {
     rt_handle: Handle,
     should_exit: bool,
     upload_started_at: Option<Instant>,
-    /// Last error message with timestamp for auto-clear
     last_error: Arc<std::sync::Mutex<Option<(String, Instant)>>>,
+    update_state: Arc<std::sync::Mutex<UpdateState>>,
 }
 
 impl eframe::App for DropZoneApp {
@@ -179,6 +210,55 @@ impl eframe::App for DropZoneApp {
         }
 
         egui::CentralPanel::default().show(ctx, |ui| {
+            if let Ok(state) = self.update_state.lock() {
+                match &*state {
+                    UpdateState::Available(version) => {
+                        ui.horizontal(|ui| {
+                            ui.colored_label(
+                                egui::Color32::from_rgb(100, 200, 100),
+                                format!("Dostepna wersja {version}"),
+                            );
+                            let update_state = self.update_state.clone();
+                            let rt = self.rt_handle.clone();
+                            if ui.small_button("Pobierz").clicked() {
+                                let ver = version.clone();
+                                if let Ok(mut s) = update_state.lock() {
+                                    *s = UpdateState::Downloading;
+                                }
+                                rt.spawn(async move {
+                                    let manager = UpdateManager::new();
+                                    match manager.download_update(&ver).await {
+                                        Ok(()) => {
+                                            if let Ok(mut s) = update_state.lock() {
+                                                *s = UpdateState::ReadyToInstall;
+                                            }
+                                        }
+                                        Err(_) => {
+                                            if let Ok(mut s) = update_state.lock() {
+                                                *s = UpdateState::None;
+                                            }
+                                        }
+                                    }
+                                });
+                            }
+                        });
+                        ui.separator();
+                    }
+                    UpdateState::Downloading => {
+                        ui.colored_label(egui::Color32::YELLOW, "Pobieranie aktualizacji...");
+                        ui.separator();
+                    }
+                    UpdateState::ReadyToInstall => {
+                        ui.colored_label(
+                            egui::Color32::from_rgb(100, 200, 100),
+                            "Aktualizacja pobrana - uruchom ponownie aplikacje",
+                        );
+                        ui.separator();
+                    }
+                    _ => {}
+                }
+            }
+
             let is_hovering = ctx.input(|i| !i.raw.hovered_files.is_empty());
             
             if is_hovering {
@@ -187,7 +267,7 @@ impl eframe::App for DropZoneApp {
             }
 
             ui.vertical_centered(|ui| {
-                ui.add_space(30.0);
+                ui.add_space(20.0);
                 ui.heading("☁");
                 ui.add_space(10.0);
                 if is_hovering {
@@ -411,7 +491,12 @@ impl eframe::App for DropZoneApp {
         }
 
         let has_error = self.last_error.lock().map(|e| e.is_some()).unwrap_or(false);
-        if self.is_uploading || self.copy_feedback.is_some() || has_error {
+        let is_updating = self
+            .update_state
+            .lock()
+            .map(|s| matches!(*s, UpdateState::Checking | UpdateState::Downloading))
+            .unwrap_or(false);
+        if self.is_uploading || self.copy_feedback.is_some() || has_error || is_updating {
             ctx.request_repaint_after(std::time::Duration::from_millis(100));
         }
     }
