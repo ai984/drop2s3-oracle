@@ -63,14 +63,25 @@ impl UiManager {
             Box::new(move |_cc| {
                 let update_state = Arc::new(std::sync::Mutex::new(UpdateState::Checking));
                 
-                // Check for updates in background
                 let update_state_clone = update_state.clone();
                 handle.spawn(async move {
                     let manager = UpdateManager::new();
                     match manager.check_for_updates().await {
                         Ok(Some(version)) => {
                             if let Ok(mut state) = update_state_clone.lock() {
-                                *state = UpdateState::Available(version);
+                                *state = UpdateState::Downloading;
+                            }
+                            match manager.download_update(&version).await {
+                                Ok(()) => {
+                                    if let Ok(mut state) = update_state_clone.lock() {
+                                        *state = UpdateState::ReadyToInstall;
+                                    }
+                                }
+                                Err(_) => {
+                                    if let Ok(mut state) = update_state_clone.lock() {
+                                        *state = UpdateState::None;
+                                    }
+                                }
                             }
                         }
                         Ok(None) | Err(_) => {
@@ -212,38 +223,6 @@ impl eframe::App for DropZoneApp {
         egui::CentralPanel::default().show(ctx, |ui| {
             if let Ok(state) = self.update_state.lock() {
                 match &*state {
-                    UpdateState::Available(version) => {
-                        ui.horizontal(|ui| {
-                            ui.colored_label(
-                                egui::Color32::from_rgb(100, 200, 100),
-                                format!("Dostepna wersja {version}"),
-                            );
-                            let update_state = self.update_state.clone();
-                            let rt = self.rt_handle.clone();
-                            if ui.small_button("Pobierz").clicked() {
-                                let ver = version.clone();
-                                if let Ok(mut s) = update_state.lock() {
-                                    *s = UpdateState::Downloading;
-                                }
-                                rt.spawn(async move {
-                                    let manager = UpdateManager::new();
-                                    match manager.download_update(&ver).await {
-                                        Ok(()) => {
-                                            if let Ok(mut s) = update_state.lock() {
-                                                *s = UpdateState::ReadyToInstall;
-                                            }
-                                        }
-                                        Err(_) => {
-                                            if let Ok(mut s) = update_state.lock() {
-                                                *s = UpdateState::None;
-                                            }
-                                        }
-                                    }
-                                });
-                            }
-                        });
-                        ui.separator();
-                    }
                     UpdateState::Downloading => {
                         ui.colored_label(egui::Color32::YELLOW, "Pobieranie aktualizacji...");
                         ui.separator();
