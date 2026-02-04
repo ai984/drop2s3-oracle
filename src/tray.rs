@@ -64,7 +64,13 @@ impl TrayManager {
         MenuEvent::set_event_handler(Some(|event: MenuEvent| {
             if let Some(quit_id) = QUIT_ITEM_ID.get() {
                 if event.id == *quit_id {
-                    tracing::info!("Quit from tray requested - exiting immediately");
+                    tracing::info!("Quit from tray requested");
+                    
+                    if let Err(e) = crate::update::UpdateManager::apply_update_on_shutdown() {
+                        tracing::warn!("Failed to apply update: {}", e);
+                    }
+                    
+                    tracing::info!("Exiting immediately");
                     std::process::exit(0);
                 }
             }

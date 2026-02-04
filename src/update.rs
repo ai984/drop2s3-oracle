@@ -42,12 +42,12 @@ impl UpdateManager {
         std::env::current_exe().unwrap_or_else(|_| PathBuf::from("drop2s3.exe"))
     }
 
-    pub fn update_already_downloaded(&self) -> bool {
+    pub fn update_ready_to_install(&self) -> bool {
         self.new_exe_path().exists()
     }
 
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
-        if self.update_already_downloaded() {
+        if self.update_ready_to_install() {
             tracing::info!("Update already downloaded, skipping check");
             return Ok(None);
         }
@@ -56,20 +56,26 @@ impl UpdateManager {
             "https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         );
 
-        let release: Release = self
+        let response = self
             .client
             .get(&url)
             .header("User-Agent", "Drop2S3")
+            .timeout(std::time::Duration::from_secs(10))
             .send()
-            .await?
-            .json()
             .await?;
 
+        if !response.status().is_success() {
+            return Ok(None);
+        }
+
+        let release: Release = response.json().await?;
         let latest_version = release.tag_name.trim_start_matches('v');
 
         if Self::is_newer_version(latest_version, CURRENT_VERSION)? {
+            tracing::info!("New version available: {} (current: {})", latest_version, CURRENT_VERSION);
             Ok(Some(latest_version.to_string()))
         } else {
+            tracing::debug!("No update available (latest: {}, current: {})", latest_version, CURRENT_VERSION);
             Ok(None)
         }
     }
@@ -94,6 +100,8 @@ impl UpdateManager {
             .find(|a| a.name.ends_with(".exe"))
             .ok_or_else(|| anyhow::anyhow!("No .exe found in release"))?;
 
+        tracing::info!("Downloading update from: {}", asset.browser_download_url);
+        
         let bytes = self
             .client
             .get(&asset.browser_download_url)
@@ -103,7 +111,7 @@ impl UpdateManager {
             .await?;
 
         let new_exe = self.new_exe_path();
-        tracing::info!("Saving update to: {:?}", new_exe);
+        tracing::info!("Saving update to: {:?} ({} bytes)", new_exe, bytes.len());
         tokio::fs::write(&new_exe, bytes).await?;
 
         Ok(())
@@ -122,34 +130,44 @@ impl UpdateManager {
         Ok(latest_parts > current_parts)
     }
 
-    pub fn apply_update_on_restart() -> Result<()> {
+    pub fn apply_update_on_shutdown() -> Result<bool> {
         let exe_dir = crate::utils::get_exe_dir();
         let new_exe = exe_dir.join("drop2s3_new.exe");
         let old_exe = exe_dir.join("drop2s3_old.exe");
         let current_exe = Self::current_exe_path();
 
+        if !new_exe.exists() {
+            return Ok(false);
+        }
+
+        tracing::info!("Applying update on shutdown...");
+        tracing::info!("  Current: {:?}", current_exe);
+        tracing::info!("  New: {:?}", new_exe);
+        tracing::info!("  Old: {:?}", old_exe);
+
+        if current_exe.exists() {
+            tracing::info!("Renaming current exe to old...");
+            std::fs::rename(&current_exe, &old_exe)?;
+        }
+
+        tracing::info!("Renaming new exe to current...");
+        std::fs::rename(&new_exe, &current_exe)?;
+
+        tracing::info!("Update applied successfully! Next start will use new version.");
+        Ok(true)
+    }
+
+    pub fn cleanup_old_version() {
+        let exe_dir = crate::utils::get_exe_dir();
+        let old_exe = exe_dir.join("drop2s3_old.exe");
+
         if old_exe.exists() {
-            tracing::info!("Removing old exe: {:?}", old_exe);
-            let _ = std::fs::remove_file(&old_exe);
-        }
-
-        if new_exe.exists() {
-            tracing::info!("Applying update: {:?} -> {:?}", new_exe, current_exe);
-            
-            if current_exe.exists() {
-                std::fs::rename(&current_exe, &old_exe)?;
-                tracing::info!("Renamed current to old: {:?}", old_exe);
-            }
-            
-            std::fs::rename(&new_exe, &current_exe)?;
-            tracing::info!("Update applied successfully");
-
-            if old_exe.exists() {
-                let _ = std::fs::remove_file(&old_exe);
+            tracing::info!("Cleaning up old version: {:?}", old_exe);
+            match std::fs::remove_file(&old_exe) {
+                Ok(()) => tracing::info!("Old version removed successfully"),
+                Err(e) => tracing::warn!("Failed to remove old version: {}", e),
             }
         }
-        
-        Ok(())
     }
 }
 

@@ -33,12 +33,9 @@ fn main() -> anyhow::Result<()> {
 
     logging::init_logging()?;
 
-    // Apply pending update if exists (from previous download)
-    if let Err(e) = update::UpdateManager::apply_update_on_restart() {
-        tracing::warn!("Failed to apply update: {}", e);
-    }
+    update::UpdateManager::cleanup_old_version();
 
-    tracing::info!("Drop2S3 starting...");
+    tracing::info!("Drop2S3 v{} starting...", env!("CARGO_PKG_VERSION"));
 
     ui::UiManager::run()?;
 

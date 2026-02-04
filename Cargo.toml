@@ -1,6 +1,6 @@
 [package]
 name = "drop2s3"
-version = "1.0.2"
+version = "1.0.3"
 edition = "2021"
 authors = ["AI Assistant <ai@tl-systems.pl>"]
 description = "Minimalist Windows tray app for uploading files to Oracle Cloud Object Storage"
@@ -55,6 +55,8 @@ rand = "0.9"
 
 anyhow = "1"
 thiserror = "2"
+
+raw-window-handle = "0.6"
 
 mime_guess = "2"
 

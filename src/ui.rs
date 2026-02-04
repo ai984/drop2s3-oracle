@@ -6,11 +6,49 @@ use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
+#[cfg(target_os = "windows")]
+use std::sync::OnceLock;
+
 use crate::embedded_icons::IconType;
 use crate::history::History;
 use crate::tray::{MenuAction, TrayManager};
 use crate::update::UpdateManager;
 use crate::upload::{S3Client, UploadManager, UploadProgress};
+
+#[cfg(target_os = "windows")]
+static WINDOW_HWND: OnceLock<isize> = OnceLock::new();
+
+#[cfg(target_os = "windows")]
+pub fn hide_window() {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
+    use windows::Win32::Foundation::HWND;
+    
+    if let Some(&hwnd) = WINDOW_HWND.get() {
+        unsafe {
+            let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+pub fn show_window() {
+    use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_SHOW};
+    use windows::Win32::Foundation::HWND;
+    
+    if let Some(&hwnd) = WINDOW_HWND.get() {
+        unsafe {
+            let handle = HWND(hwnd as *mut _);
+            let _ = ShowWindow(handle, SW_SHOW);
+            let _ = SetForegroundWindow(handle);
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn hide_window() {}
+
+#[cfg(not(target_os = "windows"))]
+pub fn show_window() {}
 
 pub struct UiManager;
 
@@ -59,7 +97,20 @@ impl UiManager {
         eframe::run_native(
             "Drop2S3",
             options,
-            Box::new(move |_cc| {
+            Box::new(move |cc| {
+                #[cfg(target_os = "windows")]
+                {
+                    use raw_window_handle::HasWindowHandle;
+                    if let Ok(handle) = cc.window_handle() {
+                        if let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() {
+                            let hwnd = win32.hwnd.get() as isize;
+                            let _ = WINDOW_HWND.set(hwnd);
+                            tracing::info!("Captured window HWND: {}", hwnd);
+                        }
+                    }
+                }
+                let _ = cc;
+                
                 let update_state = Arc::new(std::sync::Mutex::new(UpdateState::Checking));
                 
                 let update_state_clone = update_state.clone();
@@ -184,8 +235,7 @@ impl eframe::App for DropZoneApp {
         
         if TrayManager::should_show_window() {
             self.window_visible = true;
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-            ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+            show_window();
         }
 
         if let Some(event) = TrayManager::poll_menu_event() {
@@ -193,8 +243,7 @@ impl eframe::App for DropZoneApp {
 
             if let MenuAction::ShowWindow = action {
                 self.window_visible = true;
-                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
+                show_window();
             }
         }
 
@@ -486,7 +535,7 @@ impl eframe::App for DropZoneApp {
         if ctx.input(|i| i.viewport().close_requested()) && !self.should_exit {
             self.window_visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            hide_window();
         }
 
         self.schedule_repaint(ctx);
@@ -498,7 +547,7 @@ impl DropZoneApp {
         if ctx.input(|i| i.viewport().close_requested()) && !self.should_exit {
             self.window_visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
-            ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
+            hide_window();
         }
         self.schedule_repaint(ctx);
     }
