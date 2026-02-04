@@ -5,8 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-const MAX_ENTRIES: usize = 10;
-const MAX_FILE_SIZE: u64 = 1_048_576;
+const MAX_FILE_SIZE: u64 = 10_485_760; // 10 MB
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct HistoryEntry {
@@ -53,9 +52,6 @@ impl History {
                 Err(_) => return, // Poisoned mutex, skip save
             };
             inner.entries.insert(0, entry);
-            if inner.entries.len() > MAX_ENTRIES {
-                inner.entries.truncate(MAX_ENTRIES);
-            }
             (inner.entries.clone(), inner.file_path.clone())
         }; // Lock released here
 
@@ -146,7 +142,7 @@ mod tests {
     }
 
     #[test]
-    fn test_fifo_at_limit() {
+    fn test_fifo_order() {
         let temp_dir = TempDir::new().unwrap();
         let history_path = temp_dir.path().join("history.json");
 
@@ -154,14 +150,15 @@ mod tests {
 
         for i in 0..12 {
             history.add(
-                &format!("file{}.txt", i),
-                &format!("https://example.com/file{}.txt", i),
+                &format!("file{i}.txt"),
+                &format!("https://example.com/file{i}.txt"),
             );
         }
 
         let entries = history.get_all();
-        assert_eq!(entries.len(), MAX_ENTRIES);
+        assert_eq!(entries.len(), 12);
         assert_eq!(entries[0].filename, "file11.txt");
+        assert_eq!(entries[11].filename, "file0.txt");
     }
 
     #[test]
