@@ -44,18 +44,22 @@ impl Drop for MultipartUploadGuard<'_> {
                 upload_id = %self.upload_id,
                 "Multipart upload not completed, aborting"
             );
-            // Spawn blocking task to abort - can't await in Drop
             let bucket = self.bucket.clone();
             let s3_path = self.s3_path.clone();
             let upload_id = self.upload_id.clone();
 
-            // Use std::thread for sync abort in Drop context
             std::thread::spawn(move || {
-                let rt = tokio::runtime::Builder::new_current_thread()
+                if let Ok(rt) = tokio::runtime::Builder::new_current_thread()
                     .enable_all()
-                    .build();
-                if let Ok(rt) = rt {
-                    let _ = rt.block_on(bucket.abort_upload(&s3_path, &upload_id));
+                    .build()
+                {
+                    let _ = rt.block_on(async {
+                        tokio::time::timeout(
+                            std::time::Duration::from_secs(5),
+                            bucket.abort_upload(&s3_path, &upload_id),
+                        )
+                        .await
+                    });
                 }
             });
         }

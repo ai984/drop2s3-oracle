@@ -142,13 +142,9 @@ impl eframe::App for DropZoneApp {
         if let Some(event) = TrayManager::poll_menu_event() {
             let action = self.tray_manager.handle_menu_event(&event);
 
-            match action {
-                MenuAction::Quit => {}
-                MenuAction::ShowWindow => {
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
-                    ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
-                MenuAction::None => {}
+            if let MenuAction::ShowWindow = action {
+                ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
+                ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
 
