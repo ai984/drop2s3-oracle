@@ -7,9 +7,7 @@ use std::time::{Duration, Instant};
 use tokio::runtime::Handle;
 
 #[cfg(target_os = "windows")]
-use std::sync::OnceLock;
-#[cfg(target_os = "windows")]
-use windows::Win32::Foundation::HWND;
+use std::sync::atomic::{AtomicIsize, Ordering};
 
 use crate::embedded_icons::IconType;
 use crate::history::History;
@@ -18,27 +16,32 @@ use crate::update::UpdateManager;
 use crate::upload::{S3Client, UploadManager, UploadProgress};
 
 #[cfg(target_os = "windows")]
-static WINDOW_HWND: OnceLock<HWND> = OnceLock::new();
+static WINDOW_HWND: AtomicIsize = AtomicIsize::new(0);
 
 #[cfg(target_os = "windows")]
 pub fn hide_window() {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
     
-    if let Some(hwnd) = WINDOW_HWND.get() {
+    let hwnd_val = WINDOW_HWND.load(Ordering::SeqCst);
+    if hwnd_val != 0 {
         unsafe {
-            let _ = ShowWindow(*hwnd, SW_HIDE);
+            let _ = ShowWindow(HWND(hwnd_val as *mut _), SW_HIDE);
         }
     }
 }
 
 #[cfg(target_os = "windows")]
 pub fn show_window() {
+    use windows::Win32::Foundation::HWND;
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_SHOW};
     
-    if let Some(hwnd) = WINDOW_HWND.get() {
+    let hwnd_val = WINDOW_HWND.load(Ordering::SeqCst);
+    if hwnd_val != 0 {
         unsafe {
-            let _ = ShowWindow(*hwnd, SW_SHOW);
-            let _ = SetForegroundWindow(*hwnd);
+            let hwnd = HWND(hwnd_val as *mut _);
+            let _ = ShowWindow(hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(hwnd);
         }
     }
 }
@@ -99,12 +102,13 @@ impl UiManager {
             Box::new(move |cc| {
                 #[cfg(target_os = "windows")]
                 {
+                    use std::sync::atomic::Ordering;
                     use raw_window_handle::HasWindowHandle;
                     if let Ok(handle) = cc.window_handle() {
                         if let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() {
-                            let hwnd = HWND(win32.hwnd.get() as *mut _);
-                            let _ = WINDOW_HWND.set(hwnd);
-                            tracing::info!("Captured window HWND: {:?}", hwnd);
+                            let hwnd = win32.hwnd.get();
+                            WINDOW_HWND.store(hwnd, Ordering::SeqCst);
+                            tracing::info!("Captured window HWND: {}", hwnd);
                         }
                     }
                 }
