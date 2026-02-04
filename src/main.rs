@@ -7,6 +7,7 @@ mod embedded_icons;
 mod history;
 mod logging;
 mod portable_crypto;
+mod single_instance;
 mod startup;
 mod tray;
 mod ui;
@@ -21,6 +22,14 @@ fn main() -> anyhow::Result<()> {
         attach_console();
         return run_encrypt_cli();
     }
+
+    let _instance_guard = match single_instance::SingleInstanceGuard::acquire() {
+        Ok(guard) => guard,
+        Err(_) => {
+            single_instance::show_already_running_message();
+            return Ok(());
+        }
+    };
 
     logging::init_logging()?;
 
