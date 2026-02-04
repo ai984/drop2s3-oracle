@@ -1,9 +1,5 @@
 use anyhow::{Context, Result};
-use image::imageops::FilterType;
 use tray_icon::Icon;
-
-const ICON_NORMAL: &[u8] = include_bytes!("../assets/icon.ico");
-const ICON_UPLOADING: &[u8] = include_bytes!("../assets/icon_uploading.ico");
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum IconType {
@@ -12,36 +8,59 @@ pub enum IconType {
 }
 
 pub fn load_icon(icon_type: IconType) -> Result<Icon> {
-    let ico_bytes = match icon_type {
-        IconType::Normal => ICON_NORMAL,
-        IconType::Uploading => ICON_UPLOADING,
+    let size = 32_u32;
+    let rgba = draw_cloud_icon(size, icon_type);
+
+    Icon::from_rgba(rgba, size, size).context("Failed to create tray icon")
+}
+
+fn draw_cloud_icon(size: u32, icon_type: IconType) -> Vec<u8> {
+    let mut pixels = vec![0u8; (size * size * 4) as usize];
+
+    let (r, g, b) = match icon_type {
+        IconType::Normal => (180, 210, 255),
+        IconType::Uploading => (80, 220, 80),
     };
 
-    let img = image::load_from_memory(ico_bytes).context("Failed to decode icon")?;
+    let cloud: &[&[u8]] = &[
+        b"     ########     ",
+        b"   ############   ",
+        b"  ##############  ",
+        b" ################ ",
+        b" ################ ",
+        b"##################",
+        b"##################",
+        b"##################",
+        b" ################ ",
+    ];
 
-    let target_size = get_tray_icon_size();
+    let ph = cloud.len();
+    let pw = cloud[0].len();
 
-    let resized = img.resize_exact(target_size, target_size, FilterType::Lanczos3);
-    let rgba = resized.to_rgba8();
+    let scale = (size as f32 / pw as f32).min(size as f32 / ph as f32);
+    let drawn_w = (pw as f32 * scale) as u32;
+    let drawn_h = (ph as f32 * scale) as u32;
+    let off_x = (size - drawn_w) / 2;
+    let off_y = (size - drawn_h) / 2;
 
-    Icon::from_rgba(rgba.into_raw(), target_size, target_size)
-        .context("Failed to create tray icon from RGBA data")
-}
+    for y in 0..size {
+        for x in 0..size {
+            if x >= off_x && x < off_x + drawn_w && y >= off_y && y < off_y + drawn_h {
+                let px = ((x - off_x) as f32 / scale) as usize;
+                let py = ((y - off_y) as f32 / scale) as usize;
 
-#[cfg(target_os = "windows")]
-fn get_tray_icon_size() -> u32 {
-    use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSMICON};
-    let size = unsafe { GetSystemMetrics(SM_CXSMICON) };
-    if size > 0 {
-        size as u32
-    } else {
-        32
+                if py < ph && px < pw && cloud[py][px] == b'#' {
+                    let idx = ((y * size + x) * 4) as usize;
+                    pixels[idx] = r;
+                    pixels[idx + 1] = g;
+                    pixels[idx + 2] = b;
+                    pixels[idx + 3] = 255;
+                }
+            }
+        }
     }
-}
 
-#[cfg(not(target_os = "windows"))]
-fn get_tray_icon_size() -> u32 {
-    32
+    pixels
 }
 
 #[cfg(test)]

@@ -64,8 +64,8 @@ impl TrayManager {
         MenuEvent::set_event_handler(Some(|event: MenuEvent| {
             if let Some(quit_id) = QUIT_ITEM_ID.get() {
                 if event.id == *quit_id {
-                    tracing::info!("Quit from tray requested");
-                    QUIT_REQUESTED.store(true, Ordering::SeqCst);
+                    tracing::info!("Quit from tray requested - exiting immediately");
+                    std::process::exit(0);
                 }
             }
             if let Some(show_id) = SHOW_ITEM_ID.get() {

@@ -23,7 +23,7 @@ impl UiManager {
             .context("Failed to create tokio runtime")?;
         let handle = rt.handle().clone();
         
-        let (upload_manager, progress_rx, cancel_token) = initialize_upload_manager(&rt)?;
+        let (upload_manager, progress_rx) = initialize_upload_manager(&rt)?;
         let upload_manager = Arc::new(upload_manager);
 
         let tray_manager = TrayManager::new()
@@ -55,8 +55,6 @@ impl UiManager {
             viewport,
             ..Default::default()
         };
-
-        let _rt_guard = rt;
 
         eframe::run_native(
             "Drop2S3",
@@ -97,7 +95,6 @@ impl UiManager {
                     tray_manager,
                     upload_manager,
                     progress_rx,
-                    cancel_token,
                     current_upload: None,
                     history: Arc::new(history),
                     copy_feedback: None,
@@ -115,6 +112,8 @@ impl UiManager {
         )
         .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
+        rt.shutdown_timeout(std::time::Duration::from_millis(500));
+
         Ok(())
     }
 }
@@ -122,7 +121,6 @@ impl UiManager {
 fn initialize_upload_manager(rt: &tokio::runtime::Runtime) -> Result<(
     UploadManager,
     tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
-    tokio_util::sync::CancellationToken,
 )> {
     let config_path = crate::utils::get_exe_dir().join("config.toml");
     let config = crate::config::Config::load(&config_path)
@@ -132,13 +130,13 @@ fn initialize_upload_manager(rt: &tokio::runtime::Runtime) -> Result<(
         .block_on(S3Client::new(&config))
         .context("Failed to create S3 client")?;
 
-    let (upload_manager, progress_rx, cancel_token) = UploadManager::new(
+    let (upload_manager, progress_rx) = UploadManager::new(
         s3_client,
         config.advanced.parallel_uploads as usize,
         3,
     );
 
-    Ok((upload_manager, progress_rx, cancel_token))
+    Ok((upload_manager, progress_rx))
 }
 
 #[derive(Clone, PartialEq)]
@@ -154,7 +152,6 @@ struct DropZoneApp {
     tray_manager: TrayManager,
     upload_manager: Arc<UploadManager>,
     progress_rx: tokio::sync::mpsc::UnboundedReceiver<UploadProgress>,
-    cancel_token: tokio_util::sync::CancellationToken,
     current_upload: Option<UploadProgress>,
     history: Arc<History>,
     copy_feedback: Option<(String, Instant)>,
@@ -164,7 +161,6 @@ struct DropZoneApp {
     upload_started_at: Option<Instant>,
     last_error: Arc<std::sync::Mutex<Option<(String, Instant)>>>,
     update_state: Arc<std::sync::Mutex<UpdateState>>,
-    // Multi-file upload tracking
     upload_queue: HashMap<String, UploadProgress>,
     total_files_count: usize,
     completed_files_count: usize,
@@ -175,7 +171,7 @@ impl eframe::App for DropZoneApp {
         // Check tray quit request
         if TrayManager::quit_requested() {
             self.should_exit = true;
-            self.cancel_token.cancel();  // Signal uploads to stop
+            self.upload_manager.cancel();
         }
 
         if self.should_exit {
@@ -228,6 +224,7 @@ impl eframe::App for DropZoneApp {
                         self.current_upload = None;
                         self.total_files_count = 0;
                         self.completed_files_count = 0;
+                        self.upload_manager.reset_cancel();
                         if let Err(e) = self.tray_manager.set_icon(IconType::Normal) {
                             tracing::error!("Failed to restore icon: {}", e);
                         }
@@ -312,7 +309,7 @@ impl eframe::App for DropZoneApp {
                 }
                 
                 if ui.small_button("Anuluj").clicked() {
-                    self.cancel_token.cancel();
+                    self.upload_manager.cancel();
                 }
                 
                 ui.add_space(10.0);
@@ -331,7 +328,7 @@ impl eframe::App for DropZoneApp {
                 for entry in entries.iter().take(5) {
                     let age = chrono::Utc::now().signed_duration_since(entry.timestamp);
                     let is_fresh = age.num_seconds() < 30;
-                    let mut url_display = format_url_short(&entry.url);
+                    let mut url_display = format_url_short(&entry.url, &entry.filename);
                     
                     ui.horizontal(|ui| {
                         let available = ui.available_width() - 30.0;
@@ -582,7 +579,7 @@ fn format_size(bytes: u64) -> String {
     }
 }
 
-fn format_url_short(url: &str) -> String {
+fn format_url_short(url: &str, original_filename: &str) -> String {
     let without_protocol = url
         .strip_prefix("https://")
         .or_else(|| url.strip_prefix("http://"))
@@ -592,8 +589,7 @@ fn format_url_short(url: &str) -> String {
     if parts.len() >= 2 {
         let domain = parts.first().unwrap_or(&"");
         let domain_short: String = domain.chars().take(20).collect();
-        let filename = parts.last().unwrap_or(&"");
-        return format!("{domain_short}.../{filename}");
+        return format!("{domain_short}.../{original_filename}");
     }
     
     without_protocol.to_string()

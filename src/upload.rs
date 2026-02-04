@@ -345,7 +345,7 @@ pub struct UploadManager {
     parallel_limit: usize,
     max_retries: u32,
     progress_tx: tokio::sync::mpsc::UnboundedSender<UploadProgress>,
-    cancel_token: CancellationToken,
+    cancel_token: std::sync::RwLock<CancellationToken>,
 }
 
 impl UploadManager {
@@ -353,7 +353,7 @@ impl UploadManager {
         s3_client: S3Client,
         parallel_limit: usize,
         max_retries: u32,
-    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<UploadProgress>, CancellationToken) {
+    ) -> (Self, tokio::sync::mpsc::UnboundedReceiver<UploadProgress>) {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
         let cancel_token = CancellationToken::new();
         (
@@ -362,16 +362,26 @@ impl UploadManager {
                 parallel_limit,
                 max_retries,
                 progress_tx: tx,
-                cancel_token: cancel_token.clone(),
+                cancel_token: std::sync::RwLock::new(cancel_token),
             },
             rx,
-            cancel_token,
         )
     }
 
-    #[allow(dead_code)]
     pub fn cancel(&self) {
-        self.cancel_token.cancel();
+        if let Ok(token) = self.cancel_token.read() {
+            token.cancel();
+        }
+    }
+    
+    pub fn reset_cancel(&self) {
+        if let Ok(mut token) = self.cancel_token.write() {
+            *token = CancellationToken::new();
+        }
+    }
+    
+    fn get_cancel_token(&self) -> CancellationToken {
+        self.cancel_token.read().map(|t| t.clone()).unwrap_or_else(|_| CancellationToken::new())
     }
 
     pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<(String, String)>> {
@@ -394,8 +404,15 @@ impl UploadManager {
             .to_string();
         let mut attempts = 0;
         loop {
+            if self.get_cancel_token().is_cancelled() {
+                return Err(anyhow::anyhow!("Upload cancelled"));
+            }
+            
             match self.upload_with_progress(file.clone()).await {
                 Ok(url) => return Ok((original_filename, url)),
+                Err(e) if e.to_string().contains("cancelled") => {
+                    return Err(e);
+                }
                 Err(e) if attempts < self.max_retries => {
                     attempts += 1;
                     let delay_secs = 2_u64.pow(attempts);
@@ -431,8 +448,9 @@ impl UploadManager {
             .with_context(|| format!("Failed to get file metadata: {}", file.display()))?
             .len();
 
-        // Check if cancelled before starting
-        if self.cancel_token.is_cancelled() {
+        let cancel_token = self.get_cancel_token();
+        
+        if cancel_token.is_cancelled() {
             self.progress_tx
                 .send(UploadProgress {
                     file_id,
@@ -472,7 +490,7 @@ impl UploadManager {
         let progress_tx = self.progress_tx.clone();
         
         let url = tokio::select! {
-            () = self.cancel_token.cancelled() => {
+            () = cancel_token.cancelled() => {
                 self.progress_tx
                     .send(UploadProgress {
                         file_id,
