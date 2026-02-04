@@ -313,11 +313,9 @@ impl eframe::App for DropZoneApp {
             if entries.is_empty() {
                 ui.small("Brak plikow");
             } else {
-                for (idx, entry) in entries.iter().take(5).enumerate() {
-                    let is_fresh = idx == 0 && {
-                        let age = chrono::Utc::now().signed_duration_since(entry.timestamp);
-                        age.num_seconds() < 30
-                    };
+                for entry in entries.iter().take(5) {
+                    let age = chrono::Utc::now().signed_duration_since(entry.timestamp);
+                    let is_fresh = age.num_seconds() < 30;
                     let mut url_display = format_url_short(&entry.url);
                     
                     ui.horizontal(|ui| {
