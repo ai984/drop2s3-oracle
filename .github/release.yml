@@ -1,0 +1,18 @@
+changelog:
+  categories:
+    - title: "Nowe funkcjonalnosci"
+      labels:
+        - "enhancement"
+        - "feature"
+    - title: "Poprawki bledow"
+      labels:
+        - "bug"
+        - "fix"
+    - title: "Zmiany techniczne"
+      labels:
+        - "chore"
+        - "refactor"
+        - "dependencies"
+    - title: "Inne zmiany"
+      labels:
+        - "*"

@@ -62,10 +62,19 @@ jobs:
           name: drop2s3-windows
 
       - name: Create GitHub Release
-        uses: softprops/action-gh-release@v1
+        uses: softprops/action-gh-release@v2
         with:
           files: drop2s3.exe
           draft: false
           prerelease: false
+          generate_release_notes: true
+          body: |
+            ## Instalacja
+            1. Pobierz `drop2s3.exe`
+            2. Uruchom `drop2s3.exe --encrypt` aby zaszyfrowac credentials
+            3. Utworz `config.toml` z zaszyfrowanymi danymi
+            4. Uruchom aplikacje
+
+            ---
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
