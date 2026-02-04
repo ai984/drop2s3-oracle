@@ -403,15 +403,13 @@ impl eframe::App for DropZoneApp {
             let error_state = self.last_error.clone();
             self.rt_handle.spawn(async move {
                 match manager.upload_files(dropped_files).await {
-                    Ok(urls) => {
-                        tracing::info!("Upload completed: {} files", urls.len());
-                        for url in &urls {
+                    Ok(results) => {
+                        tracing::info!("Upload completed: {} files", results.len());
+                        for (filename, url) in &results {
                             tracing::info!("  - {}", url);
-                            if let Some(filename) = url.split('/').next_back() {
-                                history.add(filename, url);
-                            }
+                            history.add(filename, url);
                         }
-                        if let Some(first_url) = urls.first() {
+                        if let Some((_, first_url)) = results.first() {
                             if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                 let _ = clipboard.set_text(first_url.clone());
                             }
@@ -438,8 +436,8 @@ impl eframe::App for DropZoneApp {
                         let error_state = self.last_error.clone();
                         self.rt_handle.spawn(async move {
                             match manager.upload_files(vec![temp_path.clone()]).await {
-                                Ok(urls) => {
-                                    if let Some(url) = urls.first() {
+                                Ok(results) => {
+                                    if let Some((_, url)) = results.first() {
                                         tracing::info!("Screenshot uploaded: {}", url);
                                         history.add(&filename, url);
                                         if let Ok(mut clipboard) = arboard::Clipboard::new() {

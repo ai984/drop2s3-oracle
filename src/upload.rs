@@ -374,7 +374,7 @@ impl UploadManager {
         self.cancel_token.cancel();
     }
 
-    pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<String>> {
+    pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<(String, String)>> {
         use futures::stream::{self, StreamExt};
 
         let results = stream::iter(files)
@@ -386,11 +386,16 @@ impl UploadManager {
         results.into_iter().collect()
     }
 
-    async fn upload_with_retry(&self, file: PathBuf) -> Result<String> {
+    async fn upload_with_retry(&self, file: PathBuf) -> Result<(String, String)> {
+        let original_filename = file
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_string();
         let mut attempts = 0;
         loop {
             match self.upload_with_progress(file.clone()).await {
-                Ok(url) => return Ok(url),
+                Ok(url) => return Ok((original_filename, url)),
                 Err(e) if attempts < self.max_retries => {
                     attempts += 1;
                     let delay_secs = 2_u64.pow(attempts);
@@ -398,15 +403,10 @@ impl UploadManager {
                 }
                 Err(e) => {
                     let file_id = Uuid::new_v4().to_string();
-                    let filename = file
-                        .file_name()
-                        .and_then(|n| n.to_str())
-                        .unwrap_or("unknown")
-                        .to_string();
                     
                     let _ = self.progress_tx.send(UploadProgress {
                         file_id,
-                        filename,
+                        filename: original_filename,
                         bytes_uploaded: 0,
                         total_bytes: 0,
                         status: UploadStatus::Failed(e.to_string()),
@@ -613,12 +613,17 @@ fn generate_uuid16() -> String {
         .collect()
 }
 
-/// Generate S3 path: YYYY-MM-DD/UUID16/sanitized-filename
 fn generate_s3_path(filename: &str) -> String {
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let uuid = generate_uuid16();
     let sanitized = sanitize_filename(filename);
-    format!("{date}/{uuid}/{sanitized}")
+    
+    let (name, ext) = match sanitized.rfind('.') {
+        Some(pos) => (&sanitized[..pos], &sanitized[pos..]),
+        None => (sanitized.as_str(), ""),
+    };
+    
+    format!("{date}/{name}_{uuid}{ext}")
 }
 
 #[cfg(test)]
@@ -654,14 +659,14 @@ mod tests {
         let path = generate_s3_path("żółć test.PNG");
         
         let parts: Vec<&str> = path.split('/').collect();
-        assert_eq!(parts.len(), 3);
+        assert_eq!(parts.len(), 2);
         
         assert_eq!(parts[0].len(), 10);
         assert!(parts[0].contains('-'));
         
-        assert_eq!(parts[1].len(), 16);
-        
-        assert_eq!(parts[2], "zolc-test.png");
+        assert!(parts[1].starts_with("zolc-test_"));
+        assert!(parts[1].ends_with(".png"));
+        assert_eq!(parts[1].len(), "zolc-test_".len() + 16 + ".png".len());
     }
 
     #[test]
