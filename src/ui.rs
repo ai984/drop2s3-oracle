@@ -107,6 +107,7 @@ impl UiManager {
                     upload_queue: HashMap::new(),
                     total_files_count: 0,
                     completed_files_count: 0,
+                    window_visible: true,
                 }))
             }),
         )
@@ -164,6 +165,7 @@ struct DropZoneApp {
     upload_queue: HashMap<String, UploadProgress>,
     total_files_count: usize,
     completed_files_count: usize,
+    window_visible: bool,
 }
 
 impl eframe::App for DropZoneApp {
@@ -181,6 +183,7 @@ impl eframe::App for DropZoneApp {
         }
         
         if TrayManager::should_show_window() {
+            self.window_visible = true;
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
@@ -189,16 +192,14 @@ impl eframe::App for DropZoneApp {
             let action = self.tray_manager.handle_menu_event(&event);
 
             if let MenuAction::ShowWindow = action {
+                self.window_visible = true;
                 ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                 ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
             }
         }
 
-        let is_visible = ctx.input(|i| {
-            let minimized = i.viewport().minimized.unwrap_or(false);
-            let visible = i.viewport().visible.unwrap_or(true);
-            !minimized && visible
-        });
+        let is_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        let is_visible = self.window_visible && !is_minimized;
         
         while let Ok(progress) = self.progress_rx.try_recv() {
             use crate::upload::UploadStatus;
@@ -483,6 +484,7 @@ impl eframe::App for DropZoneApp {
         }
 
         if ctx.input(|i| i.viewport().close_requested()) && !self.should_exit {
+            self.window_visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
@@ -494,6 +496,7 @@ impl eframe::App for DropZoneApp {
 impl DropZoneApp {
     fn handle_background_events(&mut self, ctx: &egui::Context) {
         if ctx.input(|i| i.viewport().close_requested()) && !self.should_exit {
+            self.window_visible = false;
             ctx.send_viewport_cmd(egui::ViewportCommand::CancelClose);
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
@@ -501,11 +504,8 @@ impl DropZoneApp {
     }
     
     fn schedule_repaint(&self, ctx: &egui::Context) {
-        let is_hidden = ctx.input(|i| {
-            let minimized = i.viewport().minimized.unwrap_or(false);
-            let visible = i.viewport().visible.unwrap_or(true);
-            minimized || !visible
-        });
+        let is_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        let is_hidden = !self.window_visible || is_minimized;
         
         if is_hidden {
             return;
