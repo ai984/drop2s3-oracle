@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use eframe::egui;
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -106,6 +107,9 @@ impl UiManager {
                     upload_started_at: None,
                     last_error: Arc::new(std::sync::Mutex::new(None)),
                     update_state,
+                    upload_queue: HashMap::new(),
+                    total_files_count: 0,
+                    completed_files_count: 0,
                 }))
             }),
         )
@@ -160,6 +164,10 @@ struct DropZoneApp {
     upload_started_at: Option<Instant>,
     last_error: Arc<std::sync::Mutex<Option<(String, Instant)>>>,
     update_state: Arc<std::sync::Mutex<UpdateState>>,
+    // Multi-file upload tracking
+    upload_queue: HashMap<String, UploadProgress>,
+    total_files_count: usize,
+    completed_files_count: usize,
 }
 
 impl eframe::App for DropZoneApp {
@@ -194,7 +202,10 @@ impl eframe::App for DropZoneApp {
             use crate::upload::UploadStatus;
             
             match &progress.status {
-                UploadStatus::Uploading => {
+                UploadStatus::Queued => {
+                    self.upload_queue.insert(progress.file_id.clone(), progress.clone());
+                    self.total_files_count = self.upload_queue.len();
+                    
                     if !self.is_uploading {
                         self.is_uploading = true;
                         self.upload_started_at = Some(Instant::now());
@@ -202,20 +213,25 @@ impl eframe::App for DropZoneApp {
                             tracing::error!("Failed to set uploading icon: {}", e);
                         }
                     }
+                }
+                UploadStatus::Uploading => {
+                    self.upload_queue.insert(progress.file_id.clone(), progress.clone());
                     self.current_upload = Some(progress);
                 }
                 UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
-                    if self.is_uploading {
+                    self.upload_queue.remove(&progress.file_id);
+                    self.completed_files_count += 1;
+                    
+                    if self.upload_queue.is_empty() {
                         self.is_uploading = false;
                         self.upload_started_at = None;
+                        self.current_upload = None;
+                        self.total_files_count = 0;
+                        self.completed_files_count = 0;
                         if let Err(e) = self.tray_manager.set_icon(IconType::Normal) {
                             tracing::error!("Failed to restore icon: {}", e);
                         }
                     }
-                    self.current_upload = None;
-                }
-                _ => {
-                    self.current_upload = Some(progress);
                 }
             }
         }
@@ -259,44 +275,43 @@ impl eframe::App for DropZoneApp {
             ui.add_space(20.0);
             ui.separator();
 
-            if let Some(progress) = &self.current_upload {
-                use crate::upload::UploadStatus;
-                
+            if self.is_uploading && self.total_files_count > 0 {
                 ui.add_space(10.0);
-                ui.label(&progress.filename);
                 
-                let fraction = if progress.total_bytes > 0 {
-                    progress.bytes_uploaded as f32 / progress.total_bytes as f32
+                let total_bytes: u64 = self.upload_queue.values().map(|p| p.total_bytes).sum();
+                let uploaded_bytes: u64 = self.upload_queue.values().map(|p| p.bytes_uploaded).sum();
+                let fraction = if total_bytes > 0 {
+                    uploaded_bytes as f32 / total_bytes as f32
                 } else {
                     0.0
                 };
                 
+                if self.total_files_count > 1 {
+                    ui.label(format!(
+                        "Przesylanie {}/{} plikow...",
+                        self.completed_files_count + 1,
+                        self.total_files_count
+                    ));
+                }
+                
                 ui.add(egui::ProgressBar::new(fraction).show_percentage());
                 
-                let status_text = match &progress.status {
-                    UploadStatus::Queued => "W kolejce...".to_string(),
-                    UploadStatus::Uploading => {
-                        if let Some(started) = self.upload_started_at {
-                            let elapsed = started.elapsed().as_secs_f64();
-                            if elapsed > 0.5 && progress.bytes_uploaded > 0 {
-                                let speed = progress.bytes_uploaded as f64 / elapsed;
-                                format!("{} | {}", format_speed(speed), format_size(progress.bytes_uploaded))
-                            } else {
-                                "Przesylanie...".to_string()
-                            }
+                if let Some(progress) = &self.current_upload {
+                    let status_text = if let Some(started) = self.upload_started_at {
+                        let elapsed = started.elapsed().as_secs_f64();
+                        if elapsed > 0.5 && uploaded_bytes > 0 {
+                            let speed = uploaded_bytes as f64 / elapsed;
+                            format!("{} - {}", progress.filename, format_speed(speed))
                         } else {
-                            "Przesylanie...".to_string()
+                            progress.filename.clone()
                         }
-                    }
-                    UploadStatus::Completed => "Ukonczone".to_string(),
-                    UploadStatus::Failed(err) => err.clone(),
-                    UploadStatus::Cancelled => "Anulowano".to_string(),
-                };
-                ui.small(&status_text);
+                    } else {
+                        progress.filename.clone()
+                    };
+                    ui.small(&status_text);
+                }
                 
-                if matches!(progress.status, UploadStatus::Queued | UploadStatus::Uploading)
-                    && ui.small_button("Anuluj").clicked()
-                {
+                if ui.small_button("Anuluj").clicked() {
                     self.cancel_token.cancel();
                 }
                 
