@@ -8,6 +8,8 @@ use tokio::runtime::Handle;
 
 #[cfg(target_os = "windows")]
 use std::sync::OnceLock;
+#[cfg(target_os = "windows")]
+use windows::Win32::Foundation::HWND;
 
 use crate::embedded_icons::IconType;
 use crate::history::History;
@@ -16,16 +18,15 @@ use crate::update::UpdateManager;
 use crate::upload::{S3Client, UploadManager, UploadProgress};
 
 #[cfg(target_os = "windows")]
-static WINDOW_HWND: OnceLock<isize> = OnceLock::new();
+static WINDOW_HWND: OnceLock<HWND> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 pub fn hide_window() {
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SW_HIDE};
-    use windows::Win32::Foundation::HWND;
     
-    if let Some(&hwnd) = WINDOW_HWND.get() {
+    if let Some(hwnd) = WINDOW_HWND.get() {
         unsafe {
-            let _ = ShowWindow(HWND(hwnd as *mut _), SW_HIDE);
+            let _ = ShowWindow(*hwnd, SW_HIDE);
         }
     }
 }
@@ -33,13 +34,11 @@ pub fn hide_window() {
 #[cfg(target_os = "windows")]
 pub fn show_window() {
     use windows::Win32::UI::WindowsAndMessaging::{ShowWindow, SetForegroundWindow, SW_SHOW};
-    use windows::Win32::Foundation::HWND;
     
-    if let Some(&hwnd) = WINDOW_HWND.get() {
+    if let Some(hwnd) = WINDOW_HWND.get() {
         unsafe {
-            let handle = HWND(hwnd as *mut _);
-            let _ = ShowWindow(handle, SW_SHOW);
-            let _ = SetForegroundWindow(handle);
+            let _ = ShowWindow(*hwnd, SW_SHOW);
+            let _ = SetForegroundWindow(*hwnd);
         }
     }
 }
@@ -103,9 +102,9 @@ impl UiManager {
                     use raw_window_handle::HasWindowHandle;
                     if let Ok(handle) = cc.window_handle() {
                         if let raw_window_handle::RawWindowHandle::Win32(win32) = handle.as_raw() {
-                            let hwnd = win32.hwnd.get() as isize;
+                            let hwnd = HWND(win32.hwnd.get() as *mut _);
                             let _ = WINDOW_HWND.set(hwnd);
-                            tracing::info!("Captured window HWND: {}", hwnd);
+                            tracing::info!("Captured window HWND: {:?}", hwnd);
                         }
                     }
                 }
