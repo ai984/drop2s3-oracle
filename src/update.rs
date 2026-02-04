@@ -1,40 +1,57 @@
 use anyhow::Result;
 use serde::Deserialize;
+use std::path::PathBuf;
 
-#[allow(dead_code)]
 const GITHUB_REPO: &str = "ai984/drop2s3-oracle";
-#[allow(dead_code)]
 const CURRENT_VERSION: &str = env!("CARGO_PKG_VERSION");
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Release {
     tag_name: String,
     assets: Vec<Asset>,
 }
 
-#[allow(dead_code)]
 #[derive(Debug, Deserialize)]
 struct Asset {
     name: String,
     browser_download_url: String,
 }
 
-#[allow(dead_code)]
 pub struct UpdateManager {
     client: reqwest::Client,
+    exe_dir: PathBuf,
 }
 
 impl UpdateManager {
     pub fn new() -> Self {
         Self {
             client: reqwest::Client::new(),
+            exe_dir: crate::utils::get_exe_dir(),
         }
     }
 
-    /// Check GitHub Releases API for newer version.
-    /// Returns Some(version) if update available, None otherwise.
+    fn new_exe_path(&self) -> PathBuf {
+        self.exe_dir.join("drop2s3_new.exe")
+    }
+
+    fn old_exe_path(&self) -> PathBuf {
+        self.exe_dir.join("drop2s3_old.exe")
+    }
+
+    fn current_exe_path() -> PathBuf {
+        std::env::current_exe().unwrap_or_else(|_| PathBuf::from("drop2s3.exe"))
+    }
+
+    pub fn update_already_downloaded(&self) -> bool {
+        self.new_exe_path().exists()
+    }
+
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
+        if self.update_already_downloaded() {
+            tracing::info!("Update already downloaded, skipping check");
+            return Ok(None);
+        }
+
         let url = format!(
             "https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         );
@@ -57,7 +74,6 @@ impl UpdateManager {
         }
     }
 
-    /// Download update to `Drop2S3_new.exe` in background.
     pub async fn download_update(&self, version: &str) -> Result<()> {
         let url = format!(
             "https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}"
@@ -72,14 +88,12 @@ impl UpdateManager {
             .json()
             .await?;
 
-        // Find .exe asset
         let asset = release
             .assets
             .iter()
             .find(|a| a.name.ends_with(".exe"))
             .ok_or_else(|| anyhow::anyhow!("No .exe found in release"))?;
 
-        // Download to Drop2S3_new.exe
         let bytes = self
             .client
             .get(&asset.browser_download_url)
@@ -88,12 +102,13 @@ impl UpdateManager {
             .bytes()
             .await?;
 
-        tokio::fs::write("Drop2S3_new.exe", bytes).await?;
+        let new_exe = self.new_exe_path();
+        tracing::info!("Saving update to: {:?}", new_exe);
+        tokio::fs::write(&new_exe, bytes).await?;
 
         Ok(())
     }
 
-    /// Compare semver versions. Returns true if latest > current.
     fn is_newer_version(latest: &str, current: &str) -> Result<bool> {
         let latest_parts: Vec<u32> = latest
             .split('.')
@@ -107,23 +122,33 @@ impl UpdateManager {
         Ok(latest_parts > current_parts)
     }
 
-    /// Apply update on next startup by replacing Drop2S3.exe with `Drop2S3_new.exe`.
-    /// Should be called at application startup before main logic.
     pub fn apply_update_on_restart() -> Result<()> {
-        if std::path::Path::new("Drop2S3_new.exe").exists() {
-            // Windows-safe file replacement:
-            // 1. Rename current .exe to .old (will be deleted later)
-            // 2. Rename new .exe to current
-            if std::path::Path::new("Drop2S3.exe").exists() {
-                std::fs::rename("Drop2S3.exe", "Drop2S3_old.exe")?;
-            }
-            std::fs::rename("Drop2S3_new.exe", "Drop2S3.exe")?;
+        let exe_dir = crate::utils::get_exe_dir();
+        let new_exe = exe_dir.join("drop2s3_new.exe");
+        let old_exe = exe_dir.join("drop2s3_old.exe");
+        let current_exe = Self::current_exe_path();
 
-            // Clean up old version
-            if std::path::Path::new("Drop2S3_old.exe").exists() {
-                let _ = std::fs::remove_file("Drop2S3_old.exe");
+        if old_exe.exists() {
+            tracing::info!("Removing old exe: {:?}", old_exe);
+            let _ = std::fs::remove_file(&old_exe);
+        }
+
+        if new_exe.exists() {
+            tracing::info!("Applying update: {:?} -> {:?}", new_exe, current_exe);
+            
+            if current_exe.exists() {
+                std::fs::rename(&current_exe, &old_exe)?;
+                tracing::info!("Renamed current to old: {:?}", old_exe);
+            }
+            
+            std::fs::rename(&new_exe, &current_exe)?;
+            tracing::info!("Update applied successfully");
+
+            if old_exe.exists() {
+                let _ = std::fs::remove_file(&old_exe);
             }
         }
+        
         Ok(())
     }
 }
@@ -159,8 +184,17 @@ mod tests {
 
     #[test]
     fn test_current_version_constant() {
-        // Verify CURRENT_VERSION is set correctly from Cargo.toml
         assert!(!CURRENT_VERSION.is_empty());
         assert!(CURRENT_VERSION.contains('.'));
+    }
+
+    #[test]
+    fn test_exe_paths() {
+        let manager = UpdateManager::new();
+        let new_path = manager.new_exe_path();
+        let old_path = manager.old_exe_path();
+        
+        assert!(new_path.to_string_lossy().contains("drop2s3_new.exe"));
+        assert!(old_path.to_string_lossy().contains("drop2s3_old.exe"));
     }
 }

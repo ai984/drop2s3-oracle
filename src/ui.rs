@@ -194,7 +194,11 @@ impl eframe::App for DropZoneApp {
             }
         }
 
-        let is_visible = !ctx.input(|i| i.viewport().minimized).unwrap_or(false);
+        let is_visible = ctx.input(|i| {
+            let minimized = i.viewport().minimized.unwrap_or(false);
+            let visible = i.viewport().visible.unwrap_or(true);
+            !minimized && visible
+        });
         
         while let Ok(progress) = self.progress_rx.try_recv() {
             use crate::upload::UploadStatus;
@@ -497,20 +501,27 @@ impl DropZoneApp {
     }
     
     fn schedule_repaint(&self, ctx: &egui::Context) {
+        let is_hidden = ctx.input(|i| {
+            let minimized = i.viewport().minimized.unwrap_or(false);
+            let visible = i.viewport().visible.unwrap_or(true);
+            minimized || !visible
+        });
+        
+        if is_hidden {
+            return;
+        }
+        
         let has_error = self.last_error.lock().map(|e| e.is_some()).unwrap_or(false);
         let is_updating = self
             .update_state
             .lock()
             .map(|s| matches!(*s, UpdateState::Downloading))
             .unwrap_or(false);
-        let is_minimized = ctx.input(|i| i.viewport().minimized).unwrap_or(false);
         
         if self.is_uploading || is_updating {
             ctx.request_repaint_after(Duration::from_millis(100));
         } else if self.copy_feedback.is_some() || has_error {
             ctx.request_repaint_after(Duration::from_millis(500));
-        } else if is_minimized {
-            ctx.request_repaint_after(Duration::from_secs(5));
         } else {
             ctx.request_repaint_after(Duration::from_secs(1));
         }
