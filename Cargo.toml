@@ -1,6 +1,6 @@
 [package]
 name = "drop2s3"
-version = "0.1.0"
+version = "1.0.0"
 edition = "2021"
 authors = ["AI Assistant <ai@tl-systems.pl>"]
 description = "Minimalist Windows tray app for uploading files to Oracle Cloud Object Storage"
