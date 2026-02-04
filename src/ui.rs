@@ -319,6 +319,14 @@ impl eframe::App for DropZoneApp {
                     }
                 }
             }
+
+            ui.with_layout(egui::Layout::bottom_up(egui::Align::RIGHT), |ui| {
+                ui.label(
+                    egui::RichText::new(concat!("v", env!("CARGO_PKG_VERSION")))
+                        .small()
+                        .color(egui::Color32::from_gray(120)),
+                );
+            });
         });
 
         let dropped_files: Vec<PathBuf> = ctx.input(|i| {
