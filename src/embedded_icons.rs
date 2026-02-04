@@ -68,13 +68,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_embedded_icons_not_empty() {
-        assert!(!ICON_NORMAL.is_empty());
-        assert!(!ICON_UPLOADING.is_empty());
+    fn test_draw_cloud_icon_not_empty() {
+        let normal = draw_cloud_icon(32, IconType::Normal);
+        let uploading = draw_cloud_icon(32, IconType::Uploading);
+
+        assert!(!normal.is_empty());
+        assert!(!uploading.is_empty());
+        assert_eq!(normal.len(), 32 * 32 * 4);
+        assert_eq!(uploading.len(), 32 * 32 * 4);
     }
 
     #[test]
     fn test_icon_type_variants() {
         assert_ne!(IconType::Normal, IconType::Uploading);
+    }
+
+    #[test]
+    fn test_icons_have_different_colors() {
+        let normal = draw_cloud_icon(32, IconType::Normal);
+        let uploading = draw_cloud_icon(32, IconType::Uploading);
+
+        assert_ne!(normal, uploading);
     }
 }
