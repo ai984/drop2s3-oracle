@@ -1,5 +1,6 @@
 use anyhow::{Context, Result};
 use base64::{engine::general_purpose::STANDARD as BASE64, Engine};
+use std::convert::TryInto;
 use windows::Win32::Security::Cryptography::{
     CryptProtectData, CryptUnprotectData, CRYPTPROTECT_UI_FORBIDDEN, CRYPT_INTEGER_BLOB,
 };
@@ -10,7 +11,7 @@ use zeroize::Zeroize;
 /// Returns Base64-encoded ciphertext suitable for TOML storage.
 ///
 /// # Security
-/// - Uses CRYPTPROTECT_UI_FORBIDDEN to prevent UI prompts
+/// - Uses `CRYPTPROTECT_UI_FORBIDDEN` to prevent UI prompts
 /// - User-scope encryption (tied to current Windows user account)
 /// - Plaintext is zeroized after encryption
 ///
@@ -27,7 +28,10 @@ pub fn encrypt(plaintext: &str) -> Result<String> {
 
     // Prepare input blob for DPAPI
     let input_blob = CRYPT_INTEGER_BLOB {
-        cbData: plaintext_bytes.len() as u32,
+        cbData: plaintext_bytes
+            .len()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Data too large for DPAPI (max 4GB)"))?,
         pbData: plaintext_bytes.as_mut_ptr(),
     };
 
@@ -41,11 +45,11 @@ pub fn encrypt(plaintext: &str) -> Result<String> {
     let result = unsafe {
         CryptProtectData(
             &input_blob,
-            None,                          // No description
-            None,                          // No optional entropy
-            None,                          // Reserved
-            None,                          // No prompt struct
-            CRYPTPROTECT_UI_FORBIDDEN,     // No UI prompts
+            None,                      // No description
+            None,                      // No optional entropy
+            None,                      // Reserved
+            None,                      // No prompt struct
+            CRYPTPROTECT_UI_FORBIDDEN, // No UI prompts
             &mut output_blob,
         )
     };
@@ -55,7 +59,10 @@ pub fn encrypt(plaintext: &str) -> Result<String> {
 
     // Check if encryption succeeded
     if result.is_err() {
-        return Err(anyhow::anyhow!("DPAPI CryptProtectData failed: {:?}", result.err()));
+        return Err(anyhow::anyhow!(
+            "DPAPI CryptProtectData failed: {:?}",
+            result.err()
+        ));
     }
 
     // Extract encrypted data from output blob
@@ -78,7 +85,7 @@ pub fn encrypt(plaintext: &str) -> Result<String> {
 /// Returns original plaintext string.
 ///
 /// # Security
-/// - Uses CRYPTPROTECT_UI_FORBIDDEN to prevent UI prompts
+/// - Uses `CRYPTPROTECT_UI_FORBIDDEN` to prevent UI prompts
 /// - Only works if encrypted by same Windows user account
 /// - Decrypted data is zeroized after conversion to String
 ///
@@ -96,7 +103,10 @@ pub fn decrypt(ciphertext: &str) -> Result<String> {
 
     // Prepare input blob for DPAPI
     let input_blob = CRYPT_INTEGER_BLOB {
-        cbData: encrypted_data.len() as u32,
+        cbData: encrypted_data
+            .len()
+            .try_into()
+            .map_err(|_| anyhow::anyhow!("Encrypted data too large for DPAPI"))?,
         pbData: encrypted_data.as_mut_ptr(),
     };
 
@@ -110,11 +120,11 @@ pub fn decrypt(ciphertext: &str) -> Result<String> {
     let result = unsafe {
         CryptUnprotectData(
             &input_blob,
-            None,                          // No description output
-            None,                          // No optional entropy
-            None,                          // Reserved
-            None,                          // No prompt struct
-            CRYPTPROTECT_UI_FORBIDDEN,     // No UI prompts
+            None,                      // No description output
+            None,                      // No optional entropy
+            None,                      // Reserved
+            None,                      // No prompt struct
+            CRYPTPROTECT_UI_FORBIDDEN, // No UI prompts
             &mut output_blob,
         )
     };
@@ -141,8 +151,8 @@ pub fn decrypt(ciphertext: &str) -> Result<String> {
     }
 
     // Convert to String (UTF-8)
-    let plaintext = String::from_utf8(decrypted_data.clone())
-        .context("Decrypted data is not valid UTF-8")?;
+    let plaintext =
+        String::from_utf8(decrypted_data.clone()).context("Decrypted data is not valid UTF-8")?;
 
     // Zeroize decrypted data
     decrypted_data.zeroize();

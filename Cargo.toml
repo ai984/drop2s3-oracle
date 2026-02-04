@@ -7,12 +7,12 @@ description = "Minimalist Windows tray app for uploading files to Oracle Cloud O
 license = "MIT"
 
 [dependencies]
-eframe = "0.33"
+eframe = { version = "0.33", default-features = false, features = ["glow", "default_fonts"] }
 egui = "0.33"
 
 tray-icon = "0.21"
 
-tokio = { version = "1", features = ["full"] }
+tokio = { version = "1", features = ["rt-multi-thread", "fs", "time", "sync", "macros"] }
 tokio-util = "0.7"
 futures = "0.3"
 
@@ -39,13 +39,13 @@ windows = { version = "0.62", features = [
 ] }
 winreg = "0.55"
 
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", default-features = false, features = ["json", "native-tls"] }
 
 rust-s3 = { version = "0.37", default-features = false, features = ["tokio-native-tls", "fail-on-err"] }
 
 arboard = "3"
 
-image = "0.25"
+image = { version = "0.25", default-features = false, features = ["ico", "png"] }
 
 zeroize = "1"
 base64 = "0.22"
@@ -64,6 +64,8 @@ tempfile = "3"
 winres = "0.1"
 
 [profile.release]
-opt-level = 3
+opt-level = "z"
 lto = true
 codegen-units = 1
+strip = true
+panic = "abort"

@@ -1,8 +1,8 @@
+use crate::portable_crypto::EncryptedCredentials;
 use anyhow::{Context, Result};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::Path;
-use crate::portable_crypto::EncryptedCredentials;
 
 /// Main configuration structure matching spec section 5.3
 #[derive(Debug, Deserialize, Serialize, Clone)]
@@ -18,6 +18,7 @@ pub struct Config {
 pub struct OracleConfig {
     pub endpoint: String,
     pub bucket: String,
+    pub namespace: String,
     #[serde(default)]
     pub access_key: String,
     #[serde(default)]
@@ -38,8 +39,6 @@ pub struct AdvancedConfig {
     pub multipart_threshold_mb: u32,
     pub multipart_chunk_mb: u32,
 }
-
-
 
 impl Config {
     /// Load configuration from TOML file
@@ -102,12 +101,11 @@ multipart_chunk_mb = 5
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         let path = path.as_ref();
-        let content = toml::to_string_pretty(self)
-            .context("Failed to serialize config to TOML")?;
-        
+        let content = toml::to_string_pretty(self).context("Failed to serialize config to TOML")?;
+
         fs::write(path, content)
             .with_context(|| format!("Failed to write config file: {}", path.display()))?;
-        
+
         Ok(())
     }
 
@@ -142,6 +140,7 @@ mod tests {
 [oracle]
 endpoint = "https://test.objectstorage.eu-frankfurt-1.oraclecloud.com"
 bucket = "test-bucket"
+namespace = "test-namespace"
 access_key = "test_access_key"
 secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
@@ -201,6 +200,7 @@ multipart_chunk_mb = 5
 [oracle]
 endpoint = ""
 bucket = "test-bucket"
+namespace = "test-namespace"
 access_key = "test_access_key"
 secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
@@ -231,6 +231,7 @@ multipart_chunk_mb = 5
 [oracle]
 endpoint = "https://test.objectstorage.eu-frankfurt-1.oraclecloud.com"
 bucket = ""
+namespace = "test-namespace"
 access_key = "test_access_key"
 secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
@@ -271,6 +272,9 @@ bucket = "test-bucket"
 
         let result = Config::load(temp_file.path());
         assert!(result.is_err());
-        assert!(result.unwrap_err().to_string().contains("Failed to parse TOML"));
+        assert!(result
+            .unwrap_err()
+            .to_string()
+            .contains("Failed to parse TOML"));
     }
 }

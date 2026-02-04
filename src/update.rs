@@ -36,8 +36,7 @@ impl UpdateManager {
     /// Returns Some(version) if update available, None otherwise.
     pub async fn check_for_updates(&self) -> Result<Option<String>> {
         let url = format!(
-            "https://api.github.com/repos/{}/releases/latest",
-            GITHUB_REPO
+            "https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         );
 
         let release: Release = self
@@ -58,11 +57,10 @@ impl UpdateManager {
         }
     }
 
-    /// Download update to Drop2S3_new.exe in background.
+    /// Download update to `Drop2S3_new.exe` in background.
     pub async fn download_update(&self, version: &str) -> Result<()> {
         let url = format!(
-            "https://api.github.com/repos/{}/releases/tags/v{}",
-            GITHUB_REPO, version
+            "https://api.github.com/repos/{GITHUB_REPO}/releases/tags/v{version}"
         );
 
         let release: Release = self
@@ -109,7 +107,7 @@ impl UpdateManager {
         Ok(latest_parts > current_parts)
     }
 
-    /// Apply update on next startup by replacing Drop2S3.exe with Drop2S3_new.exe.
+    /// Apply update on next startup by replacing Drop2S3.exe with `Drop2S3_new.exe`.
     /// Should be called at application startup before main logic.
     pub fn apply_update_on_restart() -> Result<()> {
         if std::path::Path::new("Drop2S3_new.exe").exists() {

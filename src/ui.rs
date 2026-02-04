@@ -14,7 +14,11 @@ pub struct UiManager;
 
 impl UiManager {
     pub fn run() -> Result<()> {
-        let rt = tokio::runtime::Runtime::new().context("Failed to create tokio runtime")?;
+        let rt = tokio::runtime::Builder::new_multi_thread()
+            .worker_threads(2)
+            .enable_all()
+            .build()
+            .context("Failed to create tokio runtime")?;
         let handle = rt.handle().clone();
         
         let (upload_manager, progress_rx, cancel_token) = initialize_upload_manager(&rt)?;
@@ -27,16 +31,26 @@ impl UiManager {
         let history = History::new(&history_path)
             .context("Failed to load history")?;
 
+        let window_size = [320.0_f32, 290.0_f32];
+        let position = get_bottom_right_position(window_size[0], window_size[1]);
+        
+        let mut viewport = egui::ViewportBuilder::default()
+            .with_inner_size(window_size)
+            .with_min_inner_size([280.0, 200.0])
+            .with_always_on_top()
+            .with_resizable(true)
+            .with_decorations(true)
+            .with_close_button(true)
+            .with_minimize_button(true)
+            .with_maximize_button(false)
+            .with_transparent(false);
+        
+        if let Some(pos) = position {
+            viewport = viewport.with_position(pos);
+        }
+        
         let options = eframe::NativeOptions {
-            viewport: egui::ViewportBuilder::default()
-                .with_inner_size([300.0, 400.0])
-                .with_min_inner_size([280.0, 350.0])
-                .with_always_on_top()
-                .with_resizable(true)
-                .with_decorations(true)
-                .with_close_button(true)
-                .with_minimize_button(true)
-                .with_maximize_button(false),
+            viewport,
             ..Default::default()
         };
 
@@ -57,11 +71,12 @@ impl UiManager {
                     is_uploading: false,
                     rt_handle: handle,
                     should_exit: false,
-                    window_positioned: false,
+                    upload_started_at: None,
+                    last_error: Arc::new(std::sync::Mutex::new(None)),
                 }))
             }),
         )
-        .map_err(|e| anyhow::anyhow!("eframe error: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("eframe error: {e}"))?;
 
         Ok(())
     }
@@ -100,27 +115,26 @@ struct DropZoneApp {
     is_uploading: bool,
     rt_handle: Handle,
     should_exit: bool,
-    window_positioned: bool,
+    upload_started_at: Option<Instant>,
+    /// Last error message with timestamp for auto-clear
+    last_error: Arc<std::sync::Mutex<Option<(String, Instant)>>>,
 }
 
 impl eframe::App for DropZoneApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        if !self.window_positioned {
-            self.window_positioned = true;
-            if let Some((screen_w, screen_h)) = get_screen_size() {
-                let window_size = egui::vec2(300.0, 400.0);
-                let margin = 20.0;
-                let taskbar_height = 48.0;
-                let pos = egui::pos2(
-                    screen_w - window_size.x - margin,
-                    screen_h - window_size.y - margin - taskbar_height,
-                );
-                ctx.send_viewport_cmd(egui::ViewportCommand::OuterPosition(pos));
-            }
+        // Check tray quit request
+        if TrayManager::quit_requested() {
+            self.should_exit = true;
+            self.cancel_token.cancel();  // Signal uploads to stop
         }
 
-        if let Some(event) = TrayManager::poll_tray_event() {
-            self.tray_manager.handle_tray_event(&event);
+        if self.should_exit {
+            // Give uploads time to cancel gracefully
+            ctx.send_viewport_cmd(egui::ViewportCommand::Close);
+            return;  // Exit update loop
+        }
+        
+        if TrayManager::should_show_window() {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
             ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
         }
@@ -129,15 +143,10 @@ impl eframe::App for DropZoneApp {
             let action = self.tray_manager.handle_menu_event(&event);
 
             match action {
-                MenuAction::Quit => {
-                    std::process::exit(0);
-                }
+                MenuAction::Quit => {}
                 MenuAction::ShowWindow => {
                     ctx.send_viewport_cmd(egui::ViewportCommand::Visible(true));
                     ctx.send_viewport_cmd(egui::ViewportCommand::Focus);
-                }
-                MenuAction::ShowSettings => {
-                    tracing::info!("Settings not implemented yet");
                 }
                 MenuAction::None => {}
             }
@@ -150,6 +159,7 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Uploading => {
                     if !self.is_uploading {
                         self.is_uploading = true;
+                        self.upload_started_at = Some(Instant::now());
                         if let Err(e) = self.tray_manager.set_icon(IconType::Uploading) {
                             tracing::error!("Failed to set uploading icon: {}", e);
                         }
@@ -159,6 +169,7 @@ impl eframe::App for DropZoneApp {
                 UploadStatus::Completed | UploadStatus::Failed(_) | UploadStatus::Cancelled => {
                     if self.is_uploading {
                         self.is_uploading = false;
+                        self.upload_started_at = None;
                         if let Err(e) = self.tray_manager.set_icon(IconType::Normal) {
                             tracing::error!("Failed to restore icon: {}", e);
                         }
@@ -181,7 +192,7 @@ impl eframe::App for DropZoneApp {
 
             ui.vertical_centered(|ui| {
                 ui.add_space(30.0);
-                ui.heading("☁️");
+                ui.heading("☁");
                 ui.add_space(10.0);
                 if is_hovering {
                     ui.label("Upusc tutaj");
@@ -208,13 +219,25 @@ impl eframe::App for DropZoneApp {
                 ui.add(egui::ProgressBar::new(fraction).show_percentage());
                 
                 let status_text = match &progress.status {
-                    UploadStatus::Queued => "W kolejce...",
-                    UploadStatus::Uploading => "Przesylanie...",
-                    UploadStatus::Completed => "Ukonczone",
-                    UploadStatus::Failed(err) => err,
-                    UploadStatus::Cancelled => "Anulowano",
+                    UploadStatus::Queued => "W kolejce...".to_string(),
+                    UploadStatus::Uploading => {
+                        if let Some(started) = self.upload_started_at {
+                            let elapsed = started.elapsed().as_secs_f64();
+                            if elapsed > 0.5 && progress.bytes_uploaded > 0 {
+                                let speed = progress.bytes_uploaded as f64 / elapsed;
+                                format!("{} | {}", format_speed(speed), format_size(progress.bytes_uploaded))
+                            } else {
+                                "Przesylanie...".to_string()
+                            }
+                        } else {
+                            "Przesylanie...".to_string()
+                        }
+                    }
+                    UploadStatus::Completed => "Ukonczone".to_string(),
+                    UploadStatus::Failed(err) => err.clone(),
+                    UploadStatus::Cancelled => "Anulowano".to_string(),
                 };
-                ui.small(status_text);
+                ui.small(&status_text);
                 
                 if matches!(progress.status, UploadStatus::Queued | UploadStatus::Uploading)
                     && ui.small_button("Anuluj").clicked()
@@ -235,43 +258,69 @@ impl eframe::App for DropZoneApp {
             if entries.is_empty() {
                 ui.small("Brak plikow");
             } else {
-                egui::ScrollArea::vertical()
-                    .max_height(150.0)
-                    .show(ui, |ui| {
-                        for entry in entries.iter().take(10) {
-                            ui.horizontal(|ui| {
-                                let display_name = if entry.filename.len() > 20 {
-                                    format!("{}...", &entry.filename[..17])
-                                } else {
-                                    entry.filename.clone()
-                                };
-                                
-                                let response = ui.small(&display_name);
-                                if response.double_clicked() {
-                                    if let Err(e) = open_url_in_browser(&entry.url) {
-                                        tracing::error!("Failed to open URL: {}", e);
-                                    }
+                for (idx, entry) in entries.iter().take(5).enumerate() {
+                    let is_fresh = idx == 0 && {
+                        let age = chrono::Utc::now().signed_duration_since(entry.timestamp);
+                        age.num_seconds() < 30
+                    };
+                    let mut url_display = format_url_short(&entry.url);
+                    
+                    ui.horizontal(|ui| {
+                        let available = ui.available_width() - 30.0;
+                        
+                        let text_edit = egui::TextEdit::singleline(&mut url_display)
+                            .interactive(false)
+                            .font(egui::TextStyle::Small);
+                        
+                        let response = if is_fresh {
+                            ui.visuals_mut().widgets.inactive.bg_fill = egui::Color32::from_rgb(45, 65, 95);
+                            ui.visuals_mut().widgets.inactive.fg_stroke.color = egui::Color32::from_rgb(150, 200, 255);
+                            ui.add_sized([available, 20.0], text_edit)
+                        } else {
+                            ui.add_sized([available, 18.0], text_edit)
+                        };
+                        
+                        if response.clicked() {
+                            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                if clipboard.set_text(entry.url.clone()).is_ok() {
+                                    self.copy_feedback = Some((entry.filename.clone(), Instant::now()));
                                 }
-                                response.on_hover_text(&entry.url);
-                                
-                                if ui.small_button("📋").on_hover_text("Kopiuj link").clicked() {
-                                    if let Ok(mut clipboard) = arboard::Clipboard::new() {
-                                        if clipboard.set_text(entry.url.clone()).is_ok() {
-                                            self.copy_feedback = Some((entry.filename.clone(), Instant::now()));
-                                        }
-                                    }
+                            }
+                        }
+                        if response.double_clicked() {
+                            if let Err(e) = open_url_in_browser(&entry.url) {
+                                tracing::error!("Failed to open URL: {}", e);
+                            }
+                        }
+                        
+                        if ui.small_button("📋").on_hover_text("Kopiuj").clicked() {
+                            if let Ok(mut clipboard) = arboard::Clipboard::new() {
+                                if clipboard.set_text(entry.url.clone()).is_ok() {
+                                    self.copy_feedback = Some((entry.filename.clone(), Instant::now()));
                                 }
-                            });
+                            }
                         }
                     });
+                }
             }
 
             if let Some((filename, instant)) = &self.copy_feedback {
                 if instant.elapsed() < Duration::from_secs(2) {
                     ui.add_space(5.0);
-                    ui.colored_label(egui::Color32::GREEN, format!("Skopiowano: {}", filename));
+                    ui.colored_label(egui::Color32::GREEN, format!("Skopiowano: {filename}"));
                 } else {
                     self.copy_feedback = None;
+                }
+            }
+
+            if let Ok(mut err) = self.last_error.lock() {
+                if let Some((msg, timestamp)) = err.as_ref() {
+                    if timestamp.elapsed() < Duration::from_secs(10) {
+                        ui.add_space(5.0);
+                        ui.colored_label(egui::Color32::from_rgb(255, 100, 100), msg);
+                    } else {
+                        *err = None;
+                    }
                 }
             }
         });
@@ -290,6 +339,7 @@ impl eframe::App for DropZoneApp {
             tracing::info!("Files dropped: {} files", dropped_files.len());
             let manager = self.upload_manager.clone();
             let history = self.history.clone();
+            let error_state = self.last_error.clone();
             self.rt_handle.spawn(async move {
                 match manager.upload_files(dropped_files).await {
                     Ok(urls) => {
@@ -308,6 +358,9 @@ impl eframe::App for DropZoneApp {
                     }
                     Err(e) => {
                         tracing::error!("Upload failed: {}", e);
+                        if let Ok(mut err) = error_state.lock() {
+                            *err = Some((format!("Upload failed: {e}"), Instant::now()));
+                        }
                     }
                 }
             });
@@ -321,6 +374,7 @@ impl eframe::App for DropZoneApp {
                     if let Ok(temp_path) = save_image_to_temp(&image_data, &filename) {
                         let manager = self.upload_manager.clone();
                         let history = self.history.clone();
+                        let error_state = self.last_error.clone();
                         self.rt_handle.spawn(async move {
                             match manager.upload_files(vec![temp_path.clone()]).await {
                                 Ok(urls) => {
@@ -330,12 +384,15 @@ impl eframe::App for DropZoneApp {
                                         if let Ok(mut clipboard) = arboard::Clipboard::new() {
                                             let _ = clipboard.set_text(url.clone());
                                         }
-                                    }
-                                    let _ = std::fs::remove_file(&temp_path);
-                                }
-                                Err(e) => {
-                                    tracing::error!("Screenshot upload failed: {}", e);
-                                    let _ = std::fs::remove_file(&temp_path);
+                                     }
+                                     let _ = tokio::fs::remove_file(&temp_path).await;
+                                 }
+                                 Err(e) => {
+                                     tracing::error!("Screenshot upload failed: {}", e);
+                                     let _ = tokio::fs::remove_file(&temp_path).await;
+                                     if let Ok(mut err) = error_state.lock() {
+                                         *err = Some((format!("Screenshot failed: {e}"), Instant::now()));
+                                     }
                                 }
                             }
                         });
@@ -349,7 +406,10 @@ impl eframe::App for DropZoneApp {
             ctx.send_viewport_cmd(egui::ViewportCommand::Visible(false));
         }
 
-        ctx.request_repaint();
+        let has_error = self.last_error.lock().map(|e| e.is_some()).unwrap_or(false);
+        if self.is_uploading || self.copy_feedback.is_some() || has_error {
+            ctx.request_repaint_after(std::time::Duration::from_millis(100));
+        }
     }
 }
 
@@ -396,18 +456,66 @@ fn save_image_to_temp(image_data: &arboard::ImageData, filename: &str) -> Result
 }
 
 #[cfg(target_os = "windows")]
-fn get_screen_size() -> Option<(f32, f32)> {
+fn get_bottom_right_position(window_width: f32, window_height: f32) -> Option<egui::Pos2> {
     use windows::Win32::UI::WindowsAndMessaging::{GetSystemMetrics, SM_CXSCREEN, SM_CYSCREEN};
-    let width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
-    let height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
-    if width > 0 && height > 0 {
-        Some((width as f32, height as f32))
+    let screen_width = unsafe { GetSystemMetrics(SM_CXSCREEN) };
+    let screen_height = unsafe { GetSystemMetrics(SM_CYSCREEN) };
+    tracing::info!(
+        "Screen size: {}x{}, window: {}x{}",
+        screen_width, screen_height, window_width, window_height
+    );
+    if screen_width > 0 && screen_height > 0 {
+        let margin = 20.0;
+        let taskbar_height = 60.0;
+        let x = screen_width as f32 - window_width - margin;
+        let y = screen_height as f32 - window_height - margin - taskbar_height;
+        tracing::info!("Calculated position: ({}, {})", x, y);
+        Some(egui::pos2(x, y))
     } else {
         None
     }
 }
 
 #[cfg(not(target_os = "windows"))]
-fn get_screen_size() -> Option<(f32, f32)> {
+fn get_bottom_right_position(_window_width: f32, _window_height: f32) -> Option<egui::Pos2> {
     None
+}
+
+fn format_speed(bytes_per_sec: f64) -> String {
+    if bytes_per_sec >= 1_000_000.0 {
+        format!("{:.1} MB/s", bytes_per_sec / 1_000_000.0)
+    } else if bytes_per_sec >= 1_000.0 {
+        format!("{:.0} KB/s", bytes_per_sec / 1_000.0)
+    } else {
+        format!("{bytes_per_sec:.0} B/s")
+    }
+}
+
+fn format_size(bytes: u64) -> String {
+    if bytes >= 1_000_000_000 {
+        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
+    } else if bytes >= 1_000_000 {
+        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
+    } else if bytes >= 1_000 {
+        format!("{:.0} KB", bytes as f64 / 1_000.0)
+    } else {
+        format!("{bytes} B")
+    }
+}
+
+fn format_url_short(url: &str) -> String {
+    let without_protocol = url
+        .strip_prefix("https://")
+        .or_else(|| url.strip_prefix("http://"))
+        .unwrap_or(url);
+    
+    let parts: Vec<&str> = without_protocol.split('/').collect();
+    if parts.len() >= 2 {
+        let domain = parts.first().unwrap_or(&"");
+        let domain_short: String = domain.chars().take(20).collect();
+        let filename = parts.last().unwrap_or(&"");
+        return format!("{domain_short}.../{filename}");
+    }
+    
+    without_protocol.to_string()
 }

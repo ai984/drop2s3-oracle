@@ -3,14 +3,69 @@ use s3::creds::Credentials;
 use s3::{Bucket, Region};
 use std::path::{Path, PathBuf};
 use std::time::Duration;
+use tokio::io::AsyncReadExt;
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
 
 use crate::config::Config;
 use crate::portable_crypto;
 
+/// RAII guard for multipart upload cleanup.
+/// Ensures `abort_upload` is called if upload is not completed (e.g., on panic).
+struct MultipartUploadGuard<'a> {
+    bucket: &'a s3::Bucket,
+    s3_path: String,
+    upload_id: String,
+    completed: bool,
+}
+
+impl<'a> MultipartUploadGuard<'a> {
+    fn new(bucket: &'a s3::Bucket, s3_path: String, upload_id: String) -> Self {
+        Self {
+            bucket,
+            s3_path,
+            upload_id,
+            completed: false,
+        }
+    }
+
+    /// Mark upload as completed. Drop will NOT abort.
+    fn complete(mut self) {
+        self.completed = true;
+        // self is consumed, Drop still runs but sees completed=true
+    }
+}
+
+impl Drop for MultipartUploadGuard<'_> {
+    fn drop(&mut self) {
+        if !self.completed {
+            tracing::warn!(
+                s3_path = %self.s3_path,
+                upload_id = %self.upload_id,
+                "Multipart upload not completed, aborting"
+            );
+            // Spawn blocking task to abort - can't await in Drop
+            let bucket = self.bucket.clone();
+            let s3_path = self.s3_path.clone();
+            let upload_id = self.upload_id.clone();
+
+            // Use std::thread for sync abort in Drop context
+            std::thread::spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build();
+                if let Ok(rt) = rt {
+                    let _ = rt.block_on(bucket.abort_upload(&s3_path, &upload_id));
+                }
+            });
+        }
+    }
+}
+
 pub struct S3Client {
     bucket: Box<Bucket>,
+    namespace: String,
+    region: String,
 }
 
 impl S3Client {
@@ -38,7 +93,7 @@ impl S3Client {
             None,
             None,
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create S3 credentials: {}", e))?;
+        .map_err(|e| anyhow::anyhow!("Failed to create S3 credentials: {e}"))?;
 
         let region = Region::Custom {
             region: config.oracle.region.clone(),
@@ -46,10 +101,14 @@ impl S3Client {
         };
 
         let bucket = Bucket::new(&config.oracle.bucket, region, credentials)
-            .map_err(|e| anyhow::anyhow!("Failed to create S3 bucket: {}", e))?
+            .map_err(|e| anyhow::anyhow!("Failed to create S3 bucket: {e}"))?
             .with_path_style();
 
-        Ok(Self { bucket })
+        Ok(Self { 
+            bucket,
+            namespace: config.oracle.namespace.clone(),
+            region: config.oracle.region.clone(),
+        })
     }
 
     #[allow(dead_code)]
@@ -57,7 +116,7 @@ impl S3Client {
         self.bucket
             .list("/".to_string(), Some("/".to_string()))
             .await
-            .map_err(|e| anyhow::anyhow!("Connection test failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Connection test failed: {e}"))?;
         Ok(())
     }
 
@@ -74,7 +133,7 @@ impl S3Client {
         self.bucket
             .put_object_with_content_type(remote_key, &content, &content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
 
         let url = self.get_public_url(remote_key);
         Ok(url)
@@ -99,7 +158,7 @@ impl S3Client {
         self.bucket
             .put_object_with_content_type(&s3_path, &content, &content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
 
         let url = self.get_public_url(&s3_path);
         Ok(url)
@@ -110,17 +169,22 @@ impl S3Client {
         self.bucket
             .put_object_with_content_type(remote_key, data, content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
 
         let url = self.get_public_url(remote_key);
         Ok(url)
     }
 
-    pub async fn upload_file_multipart<P: AsRef<Path>>(
+    pub async fn upload_file_multipart_with_progress<P, F>(
         &self,
         file_path: P,
         chunk_size_mb: u32,
-    ) -> Result<String> {
+        mut on_progress: F,
+    ) -> Result<String>
+    where
+        P: AsRef<Path>,
+        F: FnMut(u64, u64),
+    {
         let path = file_path.as_ref();
         let filename = path
             .file_name()
@@ -129,41 +193,57 @@ impl S3Client {
 
         let s3_path = generate_s3_path(filename);
 
-        let content = tokio::fs::read(path)
+        // Open file for streaming (no full file in RAM)
+        let mut file = tokio::fs::File::open(path)
             .await
-            .with_context(|| format!("Failed to read file: {}", path.display()))?;
+            .with_context(|| format!("Failed to open file: {}", path.display()))?;
 
+        let file_size = file.metadata().await?.len();
         let content_type = mime_guess::from_path(path)
             .first_or_octet_stream()
             .to_string();
 
-        let chunk_size = (chunk_size_mb as usize) * 1024 * 1024;
-
-        let parts: Vec<&[u8]> = content.chunks(chunk_size).collect();
+        let chunk_size_bytes = (chunk_size_mb as usize) * 1024 * 1024;
+        let num_parts = (file_size as usize).div_ceil(chunk_size_bytes) as u32;
 
         let msg = self
             .bucket
             .initiate_multipart_upload(&s3_path, &content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to initiate multipart upload: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to initiate multipart upload: {e}"))?;
 
         let upload_id = &msg.upload_id;
 
+        let guard = MultipartUploadGuard::new(&self.bucket, s3_path.clone(), upload_id.clone());
+
         let mut etags = Vec::new();
-        for (i, chunk) in parts.iter().enumerate() {
-            let part_number = (i + 1) as u32;
+        let mut uploaded_bytes: u64 = 0;
+
+        for part_number in 1..=num_parts {
+            let remaining = file_size - uploaded_bytes;
+            let this_chunk_size = std::cmp::min(remaining as usize, chunk_size_bytes);
+
+            let mut chunk = vec![0u8; this_chunk_size];
+            file.read_exact(&mut chunk)
+                .await
+                .with_context(|| format!("Failed to read chunk {part_number} from file"))?;
+
             match self
                 .bucket
-                .put_multipart_chunk(chunk.to_vec(), &s3_path, part_number, upload_id, &content_type)
+                .put_multipart_chunk(chunk, &s3_path, part_number, upload_id, &content_type)
                 .await
             {
-                Ok(part) => etags.push(s3::serde_types::Part {
-                    etag: part.etag.to_string(),
-                    part_number,
-                }),
+                Ok(part) => {
+                    uploaded_bytes += this_chunk_size as u64;
+                    on_progress(uploaded_bytes, file_size);
+                    etags.push(s3::serde_types::Part {
+                        etag: part.etag.clone(),
+                        part_number,
+                    });
+                }
                 Err(e) => {
-                    let _ = self.bucket.abort_upload(&s3_path, upload_id).await;
-                    return Err(anyhow::anyhow!("Failed to upload part {}: {}", part_number, e));
+                    // Guard will handle abort in drop
+                    return Err(anyhow::anyhow!("Failed to upload part {part_number}: {e}"));
                 }
             }
         }
@@ -171,35 +251,67 @@ impl S3Client {
         self.bucket
             .complete_multipart_upload(&s3_path, upload_id, etags)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to complete multipart upload: {}", e))?;
+            .map_err(|e| anyhow::anyhow!("Failed to complete multipart upload: {e}"))?;
+
+        guard.complete();
 
         let url = self.get_public_url(&s3_path);
         Ok(url)
     }
 
-    pub async fn upload_file_auto<P: AsRef<Path>>(
+    #[allow(dead_code)]
+    pub async fn upload_file_multipart<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+        chunk_size_mb: u32,
+    ) -> Result<String> {
+        self.upload_file_multipart_with_progress(file_path, chunk_size_mb, |_, _| {}).await
+    }
+
+    pub async fn upload_file_auto_with_progress<P, F>(
         &self,
         file_path: P,
         threshold_mb: u32,
         chunk_mb: u32,
-    ) -> Result<String> {
+        on_progress: F,
+    ) -> Result<String>
+    where
+        P: AsRef<Path>,
+        F: FnMut(u64, u64),
+    {
         let path = file_path.as_ref();
         let metadata = tokio::fs::metadata(path)
             .await
             .with_context(|| format!("Failed to get file metadata: {}", path.display()))?;
 
         let size = metadata.len();
-        let threshold = (threshold_mb as u64) * 1024 * 1024;
+        let threshold = u64::from(threshold_mb) * 1024 * 1024;
 
         if size >= threshold {
-            self.upload_file_multipart(path, chunk_mb).await
+            self.upload_file_multipart_with_progress(path, chunk_mb, on_progress).await
         } else {
             self.upload_file_with_auto_path(path).await
         }
     }
 
+    #[allow(dead_code)]
+    pub async fn upload_file_auto<P: AsRef<Path>>(
+        &self,
+        file_path: P,
+        threshold_mb: u32,
+        chunk_mb: u32,
+    ) -> Result<String> {
+        self.upload_file_auto_with_progress(file_path, threshold_mb, chunk_mb, |_, _| {}).await
+    }
+
     fn get_public_url(&self, key: &str) -> String {
-        format!("{}/{}", self.bucket.url(), key)
+        format!(
+            "https://objectstorage.{}.oraclecloud.com/n/{}/b/{}/o/{}",
+            self.region,
+            self.namespace,
+            self.bucket.name(),
+            key
+        )
     }
 }
 
@@ -339,19 +451,24 @@ impl UploadManager {
             })
             .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
 
+        // Clone once for callback and Uploading status
+        let file_id_for_callback = file_id.clone();
+        let filename_for_callback = filename.clone();
+
         self.progress_tx
             .send(UploadProgress {
-                file_id: file_id.clone(),
-                filename: filename.clone(),
+                file_id: file_id_for_callback.clone(),
+                filename: filename_for_callback.clone(),
                 bytes_uploaded: 0,
                 total_bytes,
                 status: UploadStatus::Uploading,
             })
             .map_err(|_| anyhow::anyhow!("Progress channel closed"))?;
 
-        // Use tokio::select! to allow cancellation during upload
+        let progress_tx = self.progress_tx.clone();
+        
         let url = tokio::select! {
-            _ = self.cancel_token.cancelled() => {
+            () = self.cancel_token.cancelled() => {
                 self.progress_tx
                     .send(UploadProgress {
                         file_id,
@@ -363,7 +480,15 @@ impl UploadManager {
                     .ok();
                 return Err(anyhow::anyhow!("Upload cancelled"));
             }
-            result = self.s3_client.upload_file_auto(&file, 5, 5) => {
+            result = self.s3_client.upload_file_auto_with_progress(&file, 5, 5, |uploaded, total| {
+                let _ = progress_tx.send(UploadProgress {
+                    file_id: file_id_for_callback.clone(),
+                    filename: filename_for_callback.clone(),
+                    bytes_uploaded: uploaded,
+                    total_bytes: total,
+                    status: UploadStatus::Uploading,
+                });
+            }) => {
                 result?
             }
         };
@@ -396,7 +521,7 @@ impl UploadManager {
         for entry in WalkDir::new(folder)
             .follow_links(false)
             .into_iter()
-            .filter_map(|e| e.ok())
+            .filter_map(std::result::Result::ok)
         {
             if entry.file_type().is_file() {
                 // Skip hidden files (starting with .)
@@ -430,7 +555,7 @@ impl UploadManager {
                 // Calculate relative path
                 let rel_path = file
                     .strip_prefix(base_path)
-                    .map_err(|e| anyhow::anyhow!("Path error: {}", e))?;
+                    .map_err(|e| anyhow::anyhow!("Path error: {e}"))?;
 
                 // Preserve structure: folder_name/rel/path/file.ext
                 let s3_key = format!("{}/{}", folder_name, rel_path.display());
@@ -478,7 +603,7 @@ fn sanitize_filename(name: &str) -> String {
 fn generate_uuid16() -> String {
     Uuid::new_v4()
         .to_string()
-        .replace("-", "")
+        .replace('-', "")
         .chars()
         .take(16)
         .collect()
@@ -489,7 +614,7 @@ fn generate_s3_path(filename: &str) -> String {
     let date = chrono::Utc::now().format("%Y-%m-%d").to_string();
     let uuid = generate_uuid16();
     let sanitized = sanitize_filename(filename);
-    format!("{}/{}/{}", date, uuid, sanitized)
+    format!("{date}/{uuid}/{sanitized}")
 }
 
 #[cfg(test)]

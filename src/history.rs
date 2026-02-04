@@ -1,9 +1,9 @@
+use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
-use anyhow::Result;
 
 const MAX_ENTRIES: usize = 10;
 const MAX_FILE_SIZE: u64 = 1_048_576;
@@ -45,14 +45,22 @@ impl History {
             timestamp: Utc::now(),
             size: 0,
         };
-        
-        if let Ok(mut inner) = self.inner.lock() {
+
+        // Clone entries and file_path while holding lock
+        let (entries_to_save, file_path) = {
+            let mut inner = match self.inner.lock() {
+                Ok(guard) => guard,
+                Err(_) => return, // Poisoned mutex, skip save
+            };
             inner.entries.insert(0, entry);
             if inner.entries.len() > MAX_ENTRIES {
                 inner.entries.truncate(MAX_ENTRIES);
             }
-            let _ = inner.save_to_disk();
-        }
+            (inner.entries.clone(), inner.file_path.clone())
+        }; // Lock released here
+
+        // Save without holding lock
+        let _ = Self::save_entries_to_file(&entries_to_save, &file_path);
     }
 
     pub fn get_all(&self) -> Vec<HistoryEntry> {
@@ -64,9 +72,21 @@ impl History {
 
     #[allow(dead_code)]
     pub fn clear(&self) -> Result<()> {
-        let mut inner = self.inner.lock().map_err(|_| anyhow::anyhow!("Lock error"))?;
-        inner.entries.clear();
-        inner.save_to_disk()
+        let (entries_to_save, file_path) = {
+            let mut inner = self
+                .inner
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Lock error"))?;
+            inner.entries.clear();
+            (inner.entries.clone(), inner.file_path.clone())
+        };
+        Self::save_entries_to_file(&entries_to_save, &file_path)
+    }
+
+    fn save_entries_to_file(entries: &[HistoryEntry], path: &Path) -> Result<()> {
+        let json = serde_json::to_string_pretty(entries)?;
+        fs::write(path, json)?;
+        Ok(())
     }
 }
 
@@ -133,7 +153,10 @@ mod tests {
         let history = History::new(&history_path).unwrap();
 
         for i in 0..12 {
-            history.add(&format!("file{}.txt", i), &format!("https://example.com/file{}.txt", i));
+            history.add(
+                &format!("file{}.txt", i),
+                &format!("https://example.com/file{}.txt", i),
+            );
         }
 
         let entries = history.get_all();

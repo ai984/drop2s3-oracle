@@ -51,7 +51,7 @@ pub fn encrypt_credentials(access_key: &str, secret_key: &str) -> Result<Encrypt
     
     let key = get_embedded_key();
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
-        .map_err(|e| anyhow!("Cipher creation failed: {}", e))?;
+        .map_err(|e| anyhow!("Cipher creation failed: {e}"))?;
     
     let payload = CredentialsPayload {
         access_key: access_key.to_string(),
@@ -63,7 +63,7 @@ pub fn encrypt_credentials(access_key: &str, secret_key: &str) -> Result<Encrypt
     let nonce = chacha20poly1305::XNonce::from_slice(&nonce_bytes);
     let ciphertext = cipher
         .encrypt(nonce, plaintext.as_ref())
-        .map_err(|e| anyhow!("Encryption failed: {}", e))?;
+        .map_err(|e| anyhow!("Encryption failed: {e}"))?;
     
     let mut combined = Vec::with_capacity(NONCE_LEN + ciphertext.len());
     combined.extend_from_slice(&nonce_bytes);
@@ -95,7 +95,7 @@ pub fn decrypt_credentials(encrypted: &EncryptedCredentials) -> Result<(String, 
     
     let key = get_embedded_key();
     let cipher = XChaCha20Poly1305::new_from_slice(&key)
-        .map_err(|e| anyhow!("Cipher creation failed: {}", e))?;
+        .map_err(|e| anyhow!("Cipher creation failed: {e}"))?;
     
     let nonce = chacha20poly1305::XNonce::from_slice(nonce_bytes);
     let plaintext = cipher
