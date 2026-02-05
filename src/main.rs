@@ -81,6 +81,14 @@ fn initialize_app_state() -> Result<(tokio::runtime::Runtime, AppState)> {
     let config_path = utils::get_exe_dir().join("config.toml");
     let config = config::Config::load(&config_path).context("Failed to load config")?;
 
+    if config.app.auto_start {
+        if let Err(e) = startup::enable_auto_start() {
+            tracing::warn!("Failed to update autostart registry entry: {}", e);
+        }
+    } else if let Err(e) = startup::disable_auto_start() {
+        tracing::warn!("Failed to remove autostart registry entry: {}", e);
+    }
+
     let s3_client = rt
         .block_on(S3Client::new(&config))
         .context("Failed to create S3 client")?;
@@ -141,7 +149,12 @@ fn start_update_check(app_state: &Arc<AppState>) {
 fn run_main_loop(rt: tokio::runtime::Runtime, app_state: Arc<AppState>) -> Result<()> {
     tracing::info!("Entering main loop (lightweight mode)");
 
-    let mut should_show_window = true;
+    let start_minimized = std::env::args().any(|a| a == "--minimized");
+    let mut should_show_window = !start_minimized;
+    
+    if start_minimized {
+        tracing::info!("Starting minimized to tray");
+    }
     let mut loop_count = 0u64;
 
     loop {

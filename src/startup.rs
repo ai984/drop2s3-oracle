@@ -11,7 +11,6 @@ use winreg::RegKey;
 /// # Returns
 /// * `Ok(())` - Registry entry created successfully
 /// * `Err` - Failed to get executable path or write registry
-#[allow(dead_code)]
 pub fn enable_auto_start() -> Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
@@ -20,8 +19,9 @@ pub fn enable_auto_start() -> Result<()> {
         .context("Failed to create/open Run registry key")?;
 
     let exe_path = env::current_exe().context("Failed to get executable path")?;
+    let exe_with_args = format!("\"{}\" --minimized", exe_path.to_string_lossy());
 
-    key.set_value("Drop2S3", &exe_path.to_string_lossy().to_string())
+    key.set_value("Drop2S3", &exe_with_args)
         .context("Failed to set registry value for auto-start")?;
 
     Ok(())
@@ -35,7 +35,6 @@ pub fn enable_auto_start() -> Result<()> {
 /// # Returns
 /// * `Ok(())` - Registry entry removed or didn't exist
 /// * `Err` - Failed to access registry (permission denied, etc.)
-#[allow(dead_code)]
 pub fn disable_auto_start() -> Result<()> {
     let hkcu = RegKey::predef(HKEY_CURRENT_USER);
     let path = r"Software\Microsoft\Windows\CurrentVersion\Run";
