@@ -13,25 +13,7 @@
 
 **Drop2S3** to lekka aplikacja dzialajaca w zasobniku systemowym (system tray), ktora pozwala blyskawicznie przesylac pliki do Oracle Cloud Object Storage przez przeciagniecie i upuszczenie.
 
-```
-┌─────────────────────────────────────┐
-│                                     │
-│         Przeciagnij plik            │
-│              tutaj                  │
-│                                     │
-│            ☁️ ↑                      │
-│                                     │
-├─────────────────────────────────────┤
-│ 📋 Ostatni: faktura.pdf             │
-│    https://...eu-fra.../faktura.pdf │
-│                        [Kopiuj]     │
-├─────────────────────────────────────┤
-│ Historia:                           │
-│ • screenshot_2026-02-03.png         │
-│ • dokument.docx                     │
-│ • zdjecie.jpg                       │
-└─────────────────────────────────────┘
-```
+<img src="/assets/nJsenesuVL._com.webp" width="400">
 
 ---
 
