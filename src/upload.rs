@@ -97,7 +97,7 @@ impl S3Client {
             None,
             None,
         )
-        .map_err(|e| anyhow::anyhow!("Failed to create S3 credentials: {e}"))?;
+        .context("Failed to create S3 credentials")?;
 
         let region = Region::Custom {
             region: config.oracle.region.clone(),
@@ -105,7 +105,7 @@ impl S3Client {
         };
 
         let bucket = Bucket::new(&config.oracle.bucket, region, credentials)
-            .map_err(|e| anyhow::anyhow!("Failed to create S3 bucket: {e}"))?
+            .context("Failed to create S3 bucket")?
             .with_path_style();
 
         Ok(Self { 
@@ -113,34 +113,6 @@ impl S3Client {
             namespace: config.oracle.namespace.clone(),
             region: config.oracle.region.clone(),
         })
-    }
-
-    #[allow(dead_code)]
-    pub async fn test_connection(&self) -> Result<()> {
-        self.bucket
-            .list("/".to_string(), Some("/".to_string()))
-            .await
-            .map_err(|e| anyhow::anyhow!("Connection test failed: {e}"))?;
-        Ok(())
-    }
-
-    #[allow(dead_code)]
-    pub async fn upload_file(&self, local_path: &Path, remote_key: &str) -> Result<String> {
-        let content = tokio::fs::read(local_path)
-            .await
-            .with_context(|| format!("Failed to read file: {}", local_path.display()))?;
-
-        let content_type = mime_guess::from_path(local_path)
-            .first_or_octet_stream()
-            .to_string();
-
-        self.bucket
-            .put_object_with_content_type(remote_key, &content, &content_type)
-            .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
-
-        let url = self.get_public_url(remote_key);
-        Ok(url)
     }
 
     pub async fn upload_file_with_auto_path(&self, local_path: &Path) -> Result<String> {
@@ -162,20 +134,9 @@ impl S3Client {
         self.bucket
             .put_object_with_content_type(&s3_path, &content, &content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
+            .context("Upload failed")?;
 
         let url = self.get_public_url(&s3_path);
-        Ok(url)
-    }
-
-    #[allow(dead_code)]
-    pub async fn upload_bytes(&self, data: &[u8], remote_key: &str, content_type: &str) -> Result<String> {
-        self.bucket
-            .put_object_with_content_type(remote_key, data, content_type)
-            .await
-            .map_err(|e| anyhow::anyhow!("Upload failed: {e}"))?;
-
-        let url = self.get_public_url(remote_key);
         Ok(url)
     }
 
@@ -214,7 +175,7 @@ impl S3Client {
             .bucket
             .initiate_multipart_upload(&s3_path, &content_type)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to initiate multipart upload: {e}"))?;
+            .context("Failed to initiate multipart upload")?;
 
         let upload_id = &msg.upload_id;
 
@@ -255,21 +216,12 @@ impl S3Client {
         self.bucket
             .complete_multipart_upload(&s3_path, upload_id, etags)
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to complete multipart upload: {e}"))?;
+            .context("Failed to complete multipart upload")?;
 
         guard.complete();
 
         let url = self.get_public_url(&s3_path);
         Ok(url)
-    }
-
-    #[allow(dead_code)]
-    pub async fn upload_file_multipart<P: AsRef<Path>>(
-        &self,
-        file_path: P,
-        chunk_size_mb: u32,
-    ) -> Result<String> {
-        self.upload_file_multipart_with_progress(file_path, chunk_size_mb, |_, _| {}).await
     }
 
     pub async fn upload_file_auto_with_progress<P, F>(
@@ -298,16 +250,6 @@ impl S3Client {
         }
     }
 
-    #[allow(dead_code)]
-    pub async fn upload_file_auto<P: AsRef<Path>>(
-        &self,
-        file_path: P,
-        threshold_mb: u32,
-        chunk_mb: u32,
-    ) -> Result<String> {
-        self.upload_file_auto_with_progress(file_path, threshold_mb, chunk_mb, |_, _| {}).await
-    }
-
     fn get_public_url(&self, key: &str) -> String {
         format!(
             "https://objectstorage.{}.oraclecloud.com/n/{}/b/{}/o/{}",
@@ -327,7 +269,7 @@ impl S3Client {
         self.bucket
             .put_object_with_content_type(ROBOTS_KEY, ROBOTS_CONTENT.as_bytes(), "text/plain")
             .await
-            .map_err(|e| anyhow::anyhow!("Failed to upload robots.txt: {e}"))?;
+            .context("Failed to upload robots.txt")?;
 
         let url = self.get_public_url(ROBOTS_KEY);
         Ok(url)
@@ -360,7 +302,7 @@ pub struct UploadManager {
     parallel_limit: usize,
     max_retries: u32,
     progress_tx: tokio::sync::mpsc::UnboundedSender<UploadProgress>,
-    cancel_token: std::sync::RwLock<CancellationToken>,
+    cancel_token: std::sync::Mutex<CancellationToken>,
 }
 
 impl UploadManager {
@@ -377,26 +319,26 @@ impl UploadManager {
                 parallel_limit,
                 max_retries,
                 progress_tx: tx,
-                cancel_token: std::sync::RwLock::new(cancel_token),
+                cancel_token: std::sync::Mutex::new(cancel_token),
             },
             rx,
         )
     }
 
     pub fn cancel(&self) {
-        if let Ok(token) = self.cancel_token.read() {
+        if let Ok(token) = self.cancel_token.lock() {
             token.cancel();
         }
     }
-    
+
     pub fn reset_cancel(&self) {
-        if let Ok(mut token) = self.cancel_token.write() {
+        if let Ok(mut token) = self.cancel_token.lock() {
             *token = CancellationToken::new();
         }
     }
-    
+
     fn get_cancel_token(&self) -> CancellationToken {
-        self.cancel_token.read().map(|t| t.clone()).unwrap_or_else(|_| CancellationToken::new())
+        self.cancel_token.lock().map(|t| t.clone()).unwrap_or_else(|_| CancellationToken::new())
     }
 
     pub async fn upload_files(&self, files: Vec<PathBuf>) -> Result<Vec<(String, String)>> {
@@ -543,69 +485,6 @@ impl UploadManager {
         Ok(url)
     }
 
-    #[allow(dead_code)]
-    pub async fn upload_folder<P: AsRef<Path>>(&self, folder_path: P) -> Result<Vec<String>> {
-        use walkdir::WalkDir;
-
-        let folder = folder_path.as_ref();
-        let folder_name = folder
-            .file_name()
-            .ok_or_else(|| anyhow::anyhow!("Invalid folder path"))?
-            .to_string_lossy();
-
-        // Enumerate files recursively
-        let mut files = Vec::new();
-        for entry in WalkDir::new(folder)
-            .follow_links(false)
-            .into_iter()
-            .filter_map(std::result::Result::ok)
-        {
-            if entry.file_type().is_file() {
-                // Skip hidden files (starting with .)
-                if entry
-                    .file_name()
-                    .to_string_lossy()
-                    .starts_with('.')
-                {
-                    continue;
-                }
-                files.push(entry.path().to_path_buf());
-            }
-        }
-
-        // Upload all files with preserved structure
-        self.upload_files_with_structure(files, folder, &folder_name)
-            .await
-    }
-
-    #[allow(dead_code)]
-    async fn upload_files_with_structure(
-        &self,
-        files: Vec<PathBuf>,
-        base_path: &Path,
-        folder_name: &str,
-    ) -> Result<Vec<String>> {
-        use futures::stream::{self, StreamExt};
-
-        let results = stream::iter(files)
-            .map(|file| async move {
-                // Calculate relative path
-                let rel_path = file
-                    .strip_prefix(base_path)
-                    .map_err(|e| anyhow::anyhow!("Path error: {e}"))?;
-
-                // Preserve structure: folder_name/rel/path/file.ext
-                let s3_key = format!("{}/{}", folder_name, rel_path.display());
-
-                // Upload with custom key
-                self.s3_client.upload_file(&file, &s3_key).await
-            })
-            .buffer_unordered(self.parallel_limit)
-            .collect::<Vec<_>>()
-            .await;
-
-        results.into_iter().collect()
-    }
 }
 
 /// Sanitize filename: transliterate Polish chars, lowercase, replace spaces with hyphens
@@ -638,12 +517,7 @@ fn sanitize_filename(name: &str) -> String {
 
 /// Generate 16-character hex UUID
 fn generate_uuid16() -> String {
-    Uuid::new_v4()
-        .to_string()
-        .replace('-', "")
-        .chars()
-        .take(16)
-        .collect()
+    Uuid::new_v4().simple().to_string()[..16].to_string()
 }
 
 fn generate_s3_path(filename: &str) -> String {

@@ -1,8 +1,6 @@
-#![allow(dead_code)]
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod config;
-mod dpapi_crypto;
 mod embedded_icons;
 mod history;
 mod logging;
@@ -217,7 +215,7 @@ fn run_main_loop(rt: tokio::runtime::Runtime, app_state: Arc<AppState>) -> Resul
             }
         }
 
-        std::thread::sleep(Duration::from_millis(50));
+        std::thread::sleep(Duration::from_millis(200));
     }
 
     rt.shutdown_timeout(Duration::from_millis(500));

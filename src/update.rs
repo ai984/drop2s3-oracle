@@ -1,5 +1,6 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use serde::Deserialize;
+use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
 const GITHUB_REPO: &str = "ai984/drop2s3-oracle";
@@ -15,6 +16,7 @@ struct Release {
 struct Asset {
     name: String,
     browser_download_url: String,
+    size: u64,
 }
 
 pub struct UpdateManager {
@@ -34,6 +36,7 @@ impl UpdateManager {
         self.exe_dir.join("drop2s3_new.exe")
     }
 
+    #[cfg(test)]
     fn old_exe_path(&self) -> PathBuf {
         self.exe_dir.join("drop2s3_old.exe")
     }
@@ -97,11 +100,13 @@ impl UpdateManager {
         let asset = release
             .assets
             .iter()
-            .find(|a| a.name.ends_with(".exe"))
+            .find(|a| a.name.ends_with(".exe") && !a.name.ends_with(".sha256"))
             .ok_or_else(|| anyhow::anyhow!("No .exe found in release"))?;
 
+        let expected_size = asset.size;
+
         tracing::info!("Downloading update from: {}", asset.browser_download_url);
-        
+
         let bytes = self
             .client
             .get(&asset.browser_download_url)
@@ -110,9 +115,75 @@ impl UpdateManager {
             .bytes()
             .await?;
 
+        // Verify file size matches GitHub API metadata
+        if bytes.len() as u64 != expected_size {
+            anyhow::bail!(
+                "Size mismatch: expected {} bytes, got {} bytes",
+                expected_size,
+                bytes.len()
+            );
+        }
+
+        // Try to verify SHA256 checksum if available
+        let sha256_asset = release
+            .assets
+            .iter()
+            .find(|a| a.name.ends_with(".sha256"));
+
+        if let Some(sha256_asset) = sha256_asset {
+            match self.verify_sha256(&bytes, &sha256_asset.browser_download_url).await {
+                Ok(()) => tracing::info!("SHA256 checksum verified"),
+                Err(e) => {
+                    anyhow::bail!("SHA256 verification failed: {}", e);
+                }
+            }
+        } else {
+            tracing::warn!("No SHA256 checksum file found in release, skipping hash verification");
+        }
+
         let new_exe = self.new_exe_path();
         tracing::info!("Saving update to: {:?} ({} bytes)", new_exe, bytes.len());
-        tokio::fs::write(&new_exe, bytes).await?;
+        tokio::fs::write(&new_exe, &bytes).await?;
+
+        Ok(())
+    }
+
+    async fn verify_sha256(&self, data: &[u8], checksum_url: &str) -> Result<()> {
+        let response = self
+            .client
+            .get(checksum_url)
+            .header("User-Agent", "Drop2S3")
+            .send()
+            .await
+            .context("Failed to download SHA256 checksum")?;
+
+        if !response.status().is_success() {
+            anyhow::bail!("Failed to download SHA256 checksum: HTTP {}", response.status());
+        }
+
+        let checksum_text = response
+            .text()
+            .await
+            .context("Failed to read SHA256 checksum")?;
+
+        // Checksum file format: "hex_hash  filename" or just "hex_hash"
+        let expected_hash = checksum_text
+            .split_whitespace()
+            .next()
+            .ok_or_else(|| anyhow::anyhow!("Empty checksum file"))?
+            .to_lowercase();
+
+        let mut hasher = Sha256::new();
+        hasher.update(data);
+        let actual_hash = format!("{:x}", hasher.finalize());
+
+        if actual_hash != expected_hash {
+            anyhow::bail!(
+                "SHA256 mismatch: expected {}, got {}",
+                expected_hash,
+                actual_hash
+            );
+        }
 
         Ok(())
     }

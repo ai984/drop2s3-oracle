@@ -30,10 +30,8 @@ tracing-subscriber = { version = "0.3", features = ["env-filter", "fmt"] }
 tracing-appender = "0.2"
 
 windows = { version = "0.62", features = [
-    "Win32_Security_Cryptography",
     "Win32_Foundation",
-    "Win32_System_Memory",
-    "Win32_System_Com",
+    "Win32_Security",
     "Win32_System_Console",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
@@ -56,7 +54,7 @@ chacha20poly1305 = "0.10"
 rand = "0.9"
 
 anyhow = "1"
-thiserror = "2"
+sha2 = "0.10"
 
 raw-window-handle = "0.6"
 

@@ -61,10 +61,18 @@ jobs:
         with:
           name: drop2s3-windows
 
+      - name: Generate SHA256 checksum
+        run: |
+          $hash = (Get-FileHash -Path drop2s3.exe -Algorithm SHA256).Hash.ToLower()
+          "$hash  drop2s3.exe" | Out-File -Encoding ascii -NoNewline drop2s3.exe.sha256
+          Write-Host "SHA256: $hash"
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          files: drop2s3.exe
+          files: |
+            drop2s3.exe
+            drop2s3.exe.sha256
           draft: false
           prerelease: false
           generate_release_notes: true

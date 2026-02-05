@@ -55,7 +55,9 @@ pub fn show_window(app_state: Arc<AppState>) -> Result<()> {
 
 fn get_validated_position(app_state: &AppState) -> egui::Pos2 {
     let (saved_x, saved_y) = {
-        let config = app_state.config.lock().unwrap();
+        let Ok(config) = app_state.config.lock() else {
+            return get_bottom_right_position(1920.0, 1080.0);
+        };
         (config.app.window_x, config.app.window_y)
     };
 
@@ -558,6 +560,10 @@ impl DropZoneApp {
 }
 
 fn open_url_in_browser(url: &str) -> Result<()> {
+    if !url.starts_with("https://") && !url.starts_with("http://") {
+        anyhow::bail!("Invalid URL scheme: only http:// and https:// are allowed");
+    }
+
     #[cfg(target_os = "windows")]
     {
         std::process::Command::new("cmd")
@@ -606,19 +612,6 @@ fn format_speed(bytes_per_sec: f64) -> String {
         format!("{:.0} KB/s", bytes_per_sec / 1_000.0)
     } else {
         format!("{bytes_per_sec:.0} B/s")
-    }
-}
-
-#[allow(dead_code)]
-fn format_size(bytes: u64) -> String {
-    if bytes >= 1_000_000_000 {
-        format!("{:.1} GB", bytes as f64 / 1_000_000_000.0)
-    } else if bytes >= 1_000_000 {
-        format!("{:.1} MB", bytes as f64 / 1_000_000.0)
-    } else if bytes >= 1_000 {
-        format!("{:.0} KB", bytes as f64 / 1_000.0)
-    } else {
-        format!("{bytes} B")
     }
 }
 

@@ -6,7 +6,6 @@ use tracing_subscriber::{fmt, prelude::*, EnvFilter};
 ///
 /// Creates logs directory next to the executable with daily log files.
 /// Log format includes timestamps, levels, and targets.
-/// Filters out sensitive fields (`access_key`, `secret_key`, password).
 pub fn init_logging() -> Result<()> {
     let logs_dir = crate::utils::get_exe_dir().join("logs");
     std::fs::create_dir_all(&logs_dir)?;

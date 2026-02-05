@@ -66,19 +66,6 @@ impl History {
             .unwrap_or_default()
     }
 
-    #[allow(dead_code)]
-    pub fn clear(&self) -> Result<()> {
-        let (entries_to_save, file_path) = {
-            let mut inner = self
-                .inner
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Lock error"))?;
-            inner.entries.clear();
-            (inner.entries.clone(), inner.file_path.clone())
-        };
-        Self::save_entries_to_file(&entries_to_save, &file_path)
-    }
-
     fn save_entries_to_file(entries: &[HistoryEntry], path: &Path) -> Result<()> {
         let json = serde_json::to_string_pretty(entries)?;
         fs::write(path, json)?;

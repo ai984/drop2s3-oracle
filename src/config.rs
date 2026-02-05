@@ -5,7 +5,7 @@ use std::fs;
 use std::path::Path;
 
 /// Main configuration structure matching spec section 5.3
-#[derive(Debug, Deserialize, Serialize, Clone)]
+#[derive(Deserialize, Serialize, Clone)]
 pub struct Config {
     pub oracle: OracleConfig,
     pub app: AppConfig,
@@ -14,15 +14,22 @@ pub struct Config {
     pub credentials: Option<EncryptedCredentials>,
 }
 
+impl std::fmt::Debug for Config {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("Config")
+            .field("oracle", &self.oracle)
+            .field("app", &self.app)
+            .field("advanced", &self.advanced)
+            .field("credentials", &self.credentials.as_ref().map(|_| "[ENCRYPTED]"))
+            .finish()
+    }
+}
+
 #[derive(Debug, Deserialize, Serialize, Clone)]
 pub struct OracleConfig {
     pub endpoint: String,
     pub bucket: String,
     pub namespace: String,
-    #[serde(default)]
-    pub access_key: String,
-    #[serde(default)]
-    pub secret_key: String,
     pub region: String,
 }
 
@@ -64,43 +71,6 @@ impl Config {
         config.validate()?;
 
         Ok(config)
-    }
-
-    /// Create example config template file
-    ///
-    /// # Arguments
-    /// * `path` - Path where to create config.example.toml
-    ///
-    /// # Returns
-    /// * `Ok(())` - Template created successfully
-    /// * `Err` - Failed to write file
-    #[allow(dead_code)]
-    pub fn create_template<P: AsRef<Path>>(path: P) -> Result<()> {
-        let path = path.as_ref();
-        let template = r#"[oracle]
-endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
-bucket = "my-bucket"
-region = "eu-frankfurt-1"
-
-[credentials]
-# Generate with: drop2s3.exe --encrypt
-version = 2
-data = "BASE64_ENCRYPTED_CREDENTIALS_HERE"
-
-[app]
-auto_copy_link = true
-auto_start = false
-
-[advanced]
-parallel_uploads = 3
-multipart_threshold_mb = 5
-multipart_chunk_mb = 5
-"#;
-
-        fs::write(path, template)
-            .with_context(|| format!("Failed to write config template: {}", path.display()))?;
-
-        Ok(())
     }
 
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
@@ -145,8 +115,6 @@ mod tests {
 endpoint = "https://test.objectstorage.eu-frankfurt-1.oraclecloud.com"
 bucket = "test-bucket"
 namespace = "test-namespace"
-access_key = "test_access_key"
-secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
 
 [app]
@@ -170,31 +138,12 @@ multipart_chunk_mb = 5
             "https://test.objectstorage.eu-frankfurt-1.oraclecloud.com"
         );
         assert_eq!(config.oracle.bucket, "test-bucket");
-        assert_eq!(config.oracle.access_key, "test_access_key");
-        assert_eq!(config.oracle.secret_key, "test_secret_key");
         assert_eq!(config.oracle.region, "eu-frankfurt-1");
-        assert_eq!(config.app.auto_copy_link, true);
-        assert_eq!(config.app.auto_start, false);
+        assert!(config.app.auto_copy_link);
+        assert!(!config.app.auto_start);
         assert_eq!(config.advanced.parallel_uploads, 3);
         assert_eq!(config.advanced.multipart_threshold_mb, 5);
         assert_eq!(config.advanced.multipart_chunk_mb, 5);
-    }
-
-    #[test]
-    fn test_missing_config_creates_template() {
-        let temp_dir = tempfile::tempdir().unwrap();
-        let template_path = temp_dir.path().join("config.example.toml");
-
-        Config::create_template(&template_path).unwrap();
-
-        assert!(template_path.exists());
-
-        let content = fs::read_to_string(&template_path).unwrap();
-        assert!(content.contains("[oracle]"));
-        assert!(content.contains("[app]"));
-        assert!(content.contains("[advanced]"));
-        assert!(content.contains("endpoint ="));
-        assert!(content.contains("bucket ="));
     }
 
     #[test]
@@ -205,8 +154,6 @@ multipart_chunk_mb = 5
 endpoint = ""
 bucket = "test-bucket"
 namespace = "test-namespace"
-access_key = "test_access_key"
-secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
 
 [app]
@@ -236,8 +183,6 @@ multipart_chunk_mb = 5
 endpoint = "https://test.objectstorage.eu-frankfurt-1.oraclecloud.com"
 bucket = ""
 namespace = "test-namespace"
-access_key = "test_access_key"
-secret_key = "test_secret_key"
 region = "eu-frankfurt-1"
 
 [app]
