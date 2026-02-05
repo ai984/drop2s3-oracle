@@ -317,6 +317,21 @@ impl S3Client {
             key
         )
     }
+
+    /// Upload robots.txt to bucket root to discourage search engine indexing.
+    /// Content: "User-agent: *\nDisallow: /"
+    pub async fn upload_robots_txt(&self) -> Result<String> {
+        const ROBOTS_CONTENT: &str = "User-agent: *\nDisallow: /\n";
+        const ROBOTS_KEY: &str = "robots.txt";
+
+        self.bucket
+            .put_object_with_content_type(ROBOTS_KEY, ROBOTS_CONTENT.as_bytes(), "text/plain")
+            .await
+            .map_err(|e| anyhow::anyhow!("Failed to upload robots.txt: {e}"))?;
+
+        let url = self.get_public_url(ROBOTS_KEY);
+        Ok(url)
+    }
 }
 
 /// Upload status tracking

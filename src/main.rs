@@ -42,6 +42,11 @@ fn main() -> Result<()> {
         return run_encrypt_cli();
     }
 
+    if args.iter().any(|a| a == "--init-robots") {
+        attach_console();
+        return run_init_robots_cli();
+    }
+
     let _instance_guard = match single_instance::SingleInstanceGuard::acquire() {
         Ok(guard) => guard,
         Err(_) => {
@@ -268,6 +273,37 @@ fn run_encrypt_cli() -> Result<()> {
     println!("version = {}", encrypted.version);
     println!("data = \"{}\"", encrypted.data);
     println!();
+
+    Ok(())
+}
+
+fn run_init_robots_cli() -> Result<()> {
+    println!("Drop2S3 - Upload robots.txt");
+    println!("===========================");
+    println!();
+
+    let config_path = utils::get_exe_dir().join("config.toml");
+    let config = config::Config::load(&config_path).context("Failed to load config")?;
+
+    let rt = tokio::runtime::Builder::new_current_thread()
+        .enable_all()
+        .build()
+        .context("Failed to create tokio runtime")?;
+
+    let url = rt.block_on(async {
+        let client = upload::S3Client::new(&config)
+            .await
+            .context("Failed to create S3 client")?;
+
+        client.upload_robots_txt().await
+    })?;
+
+    println!("robots.txt uploaded successfully!");
+    println!("URL: {}", url);
+    println!();
+    println!("Content:");
+    println!("  User-agent: *");
+    println!("  Disallow: /");
 
     Ok(())
 }
