@@ -60,6 +60,7 @@ fn main() -> Result<()> {
     tracing::info!("Drop2S3 v{} starting...", env!("CARGO_PKG_VERSION"));
 
     let (rt, app_state) = initialize_app_state()?;
+    #[allow(clippy::arc_with_non_send_sync)]
     let app_state = Arc::new(app_state);
     start_update_check(&app_state);
     run_main_loop(rt, app_state)?;
@@ -147,7 +148,7 @@ fn run_main_loop(rt: tokio::runtime::Runtime, app_state: Arc<AppState>) -> Resul
         pump_windows_messages();
         
         loop_count += 1;
-        if loop_count % 100 == 0 {
+        if loop_count.is_multiple_of(100) {
             tracing::debug!("Main loop iteration {}", loop_count);
         }
 

@@ -145,13 +145,10 @@ impl eframe::App for DropZoneApp {
         while let Some(event) = TrayManager::poll_menu_event() {
             if let Ok(tray) = self.app_state.tray_manager.lock() {
                 use crate::tray::MenuAction;
-                match tray.handle_menu_event(&event) {
-                    MenuAction::Quit => {
-                        tracing::info!("Quit from menu event");
-                        self.should_exit = true;
-                        self.app_state.upload_manager.cancel();
-                    }
-                    _ => {}
+                if tray.handle_menu_event(&event) == MenuAction::Quit {
+                    tracing::info!("Quit from menu event");
+                    self.should_exit = true;
+                    self.app_state.upload_manager.cancel();
                 }
             }
         }
