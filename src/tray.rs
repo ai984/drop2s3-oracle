@@ -13,25 +13,6 @@ static SHOW_ITEM_ID: OnceLock<MenuId> = OnceLock::new();
 static SHOW_WINDOW_REQUESTED: AtomicBool = AtomicBool::new(false);
 static QUIT_REQUESTED: AtomicBool = AtomicBool::new(false);
 
-#[cfg(target_os = "windows")]
-fn show_main_window() {
-    use windows::core::PCSTR;
-    use windows::Win32::UI::WindowsAndMessaging::{
-        FindWindowA, SetForegroundWindow, ShowWindow, SW_SHOW,
-    };
-
-    unsafe {
-        if let Ok(hwnd) = FindWindowA(PCSTR::null(), PCSTR::from_raw(c"Drop2S3".as_ptr().cast())) {
-            if !hwnd.is_invalid() {
-                let _ = ShowWindow(hwnd, SW_SHOW);
-                let _ = SetForegroundWindow(hwnd);
-            }
-        }
-    }
-    SHOW_WINDOW_REQUESTED.store(true, Ordering::SeqCst);
-}
-
-#[cfg(not(target_os = "windows"))]
 fn show_main_window() {
     SHOW_WINDOW_REQUESTED.store(true, Ordering::SeqCst);
 }
@@ -65,13 +46,7 @@ impl TrayManager {
             if let Some(quit_id) = QUIT_ITEM_ID.get() {
                 if event.id == *quit_id {
                     tracing::info!("Quit from tray requested");
-                    
-                    if let Err(e) = crate::update::UpdateManager::apply_update_on_shutdown() {
-                        tracing::warn!("Failed to apply update: {}", e);
-                    }
-                    
-                    tracing::info!("Exiting immediately");
-                    std::process::exit(0);
+                    QUIT_REQUESTED.store(true, Ordering::SeqCst);
                 }
             }
             if let Some(show_id) = SHOW_ITEM_ID.get() {
@@ -104,6 +79,7 @@ impl TrayManager {
 
         let tray_icon = TrayIconBuilder::new()
             .with_menu(Box::new(menu.clone()))
+            .with_menu_on_left_click(false)
             .with_icon(icon)
             .with_tooltip("Drop2S3 - Przeciągnij pliki tutaj")
             .build()

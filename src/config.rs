@@ -30,6 +30,10 @@ pub struct OracleConfig {
 pub struct AppConfig {
     pub auto_copy_link: bool,
     pub auto_start: bool,
+    #[serde(default)]
+    pub window_x: Option<f32>,
+    #[serde(default)]
+    pub window_y: Option<f32>,
 }
 
 /// Advanced upload configuration
