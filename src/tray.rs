@@ -114,7 +114,7 @@ impl TrayManager {
 
     /// Processes menu item events (menu clicks)
     ///
-    /// Handles: "Pokaż okno", "Ustawienia", "Zablokuj", "Zamknij"
+    /// Handles: "Pokaż okno", "Zamknij"
     pub fn handle_menu_event(&self, event: &MenuEvent) -> MenuAction {
         if event.id == self.show_item_id {
             tracing::info!("Menu: Pokaż okno clicked");

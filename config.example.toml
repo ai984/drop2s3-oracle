@@ -1,6 +1,7 @@
 [oracle]
 endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
 bucket = "my-bucket"
+namespace = "my-namespace"
 access_key = ""
 secret_key = ""
 region = "eu-frankfurt-1"

@@ -89,6 +89,7 @@ data = "base64_zaszyfrowane_dane..."
 [oracle]
 endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
 bucket = "nazwa-bucketa"
+namespace = "twoj-namespace"
 region = "eu-frankfurt-1"
 
 [credentials]
@@ -136,7 +137,6 @@ Przekaz uzytkownikom tylko dwa pliki:
 ### Menu kontekstowe (prawy klik na tray)
 
 - **Pokaz okno** - otwiera Drop Zone
-- **Ustawienia** - edycja konfiguracji
 - **Zamknij** - wylacza aplikacje
 
 ---
@@ -147,16 +147,16 @@ Przekaz uzytkownikom tylko dwa pliki:
 |----------------|------|
 | 🔐 **Szyfrowanie credentials** | XChaCha20-Poly1305 - credentials zaszyfrowane w config.toml |
 | 🎲 **UUID w URL** | 16-znakowy losowy identyfikator w sciezce |
-| 🤖 **noindex** | Naglowek X-Robots-Tag zapobiega indeksowaniu |
+| 🤖 **robots.txt** | Plik robots.txt w buckecie zapobiega indeksowaniu (`--init-robots`) |
 | 📦 **Portable** | Ikony zaszyte w exe - tylko 2 pliki do dystrybucji |
 
 **Przykladowy URL:**
 ```
 https://bucket.objectstorage.eu-frankfurt-1.oci.customer-oci.com/
-  2026-02-03/a1b2c3d4e5f67890/faktura.pdf
-  ^^^^^^^^^^ ^^^^^^^^^^^^^^^^ ^^^^^^^^^^^
-  data       UUID (trudny     nazwa pliku
-             do zgadniecia)
+  2026-02-03/faktura_a1b2c3d4e5f67890.pdf
+  ^^^^^^^^^^ ^^^^^^^^ ^^^^^^^^^^^^^^^^ ^^^^
+  data       nazwa    UUID (trudny     rozszerzenie
+             pliku    do zgadniecia)
 ```
 
 ---
@@ -179,26 +179,23 @@ https://bucket.objectstorage.eu-frankfurt-1.oci.customer-oci.com/
 ### Wymagania deweloperskie
 
 - Rust 1.75+ (stable)
-- Windows 10+ SDK
-- Visual Studio Build Tools
+- **Windows**: Windows 10+ SDK + Visual Studio Build Tools
+- **Linux (cross-compilation)**: xwin toolchain + lld-link-19
 
 ### Budowanie
 
 ```bash
-# Debug
-cargo build
+# Debug (wymaga --target na Linux)
+cargo build --target x86_64-pc-windows-msvc
 
-# Release (zoptymalizowany)
-cargo build --release
-
-# Uruchom
-cargo run
+# Release (zoptymalizowany, ~2-3 MB exe)
+cargo build --release --target x86_64-pc-windows-msvc
 ```
 
 ### Testy
 
 ```bash
-cargo test
+cargo test --target x86_64-pc-windows-msvc
 ```
 
 ---
@@ -212,8 +209,8 @@ cargo test
 - [x] Wklejanie ze schowka (Ctrl+V)
 - [x] Szyfrowanie credentials (portable)
 - [x] Ikony zaszyte w exe
+- [x] Auto-update z GitHub Releases
 - [ ] Upload folderow z zachowaniem struktury
-- [ ] Auto-update z GitHub Releases
 - [ ] Obsluga wielu profili/bucketow
 
 ---
@@ -221,12 +218,12 @@ cargo test
 ## Kompilacja ze zrodel
 
 ```bash
-# Wymagania: Rust 1.75+, Windows 10+
+# Wymagania: Rust 1.75+, Windows 10+ SDK (lub xwin na Linux)
 git clone https://github.com/ai984/drop2s3-oracle.git
 cd drop2s3-oracle
-cargo build --release
+cargo build --release --target x86_64-pc-windows-msvc
 
-# Plik wykonywalny: target/release/drop2s3.exe
+# Plik wykonywalny: target/x86_64-pc-windows-msvc/release/drop2s3.exe
 ```
 
 ---
