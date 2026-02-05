@@ -7,6 +7,7 @@ mod embedded_icons;
 mod history;
 mod logging;
 mod portable_crypto;
+mod shutdown_handler;
 mod single_instance;
 mod startup;
 mod tray;
@@ -58,6 +59,8 @@ fn main() -> Result<()> {
     logging::init_logging()?;
     update::UpdateManager::cleanup_old_version();
     tracing::info!("Drop2S3 v{} starting...", env!("CARGO_PKG_VERSION"));
+
+    let _shutdown_handler = shutdown_handler::ShutdownHandler::new();
 
     let (rt, app_state) = initialize_app_state()?;
     #[allow(clippy::arc_with_non_send_sync)]
@@ -165,7 +168,7 @@ fn run_main_loop(rt: tokio::runtime::Runtime, app_state: Arc<AppState>) -> Resul
             tracing::debug!("Main loop iteration {}", loop_count);
         }
 
-        if TrayManager::quit_requested() {
+        if TrayManager::quit_requested() || shutdown_handler::is_system_shutdown_requested() {
             tracing::info!("Quit requested, shutting down...");
             if let Err(e) = update::UpdateManager::apply_update_on_shutdown() {
                 tracing::warn!("Failed to apply update: {}", e);
@@ -206,7 +209,7 @@ fn run_main_loop(rt: tokio::runtime::Runtime, app_state: Arc<AppState>) -> Resul
 
             tracing::info!("Window closed, back to lightweight mode");
 
-            if TrayManager::quit_requested() {
+            if TrayManager::quit_requested() || shutdown_handler::is_system_shutdown_requested() {
                 if let Err(e) = update::UpdateManager::apply_update_on_shutdown() {
                     tracing::warn!("Failed to apply update: {}", e);
                 }
