@@ -55,6 +55,9 @@ jobs:
     if: startsWith(github.ref, 'refs/tags/v')
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Download artifact
         uses: actions/download-artifact@v4
@@ -67,6 +70,26 @@ jobs:
           "$hash  drop2s3.exe" | Out-File -Encoding ascii -NoNewline drop2s3.exe.sha256
           Write-Host "SHA256: $hash"
 
+      - name: Get previous tag
+        id: prev_tag
+        run: |
+          $tags = git tag --sort=-version:refname | Select-Object -Skip 1 -First 1
+          if ($tags) {
+            echo "tag=$tags" >> $env:GITHUB_OUTPUT
+          } else {
+            $first = git rev-list --max-parents=0 HEAD
+            echo "tag=$first" >> $env:GITHUB_OUTPUT
+          }
+
+      - name: Generate changelog from commits
+        id: changelog
+        run: |
+          $prev = "${{ steps.prev_tag.outputs.tag }}"
+          $log = git log "$prev..HEAD" --pretty=format:"- %s" --no-merges | Where-Object { $_ -notmatch "^- (Merge|merge)" }
+          $body = ($log -join "`n")
+          # Write to file to avoid escaping issues
+          $body | Out-File -Encoding utf8 -FilePath changelog.txt
+
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
@@ -75,14 +98,6 @@ jobs:
             drop2s3.exe.sha256
           draft: false
           prerelease: false
-          generate_release_notes: true
-          body: |
-            ## Instalacja
-            1. Pobierz `drop2s3.exe`
-            2. Uruchom `drop2s3.exe --encrypt` aby zaszyfrowac credentials
-            3. Utworz `config.toml` z zaszyfrowanymi danymi
-            4. Uruchom aplikacje
-
-            ---
+          body_path: changelog.txt
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
