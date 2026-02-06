@@ -251,12 +251,11 @@ impl S3Client {
     }
 
     fn get_public_url(&self, key: &str) -> String {
-        format!(
-            "https://objectstorage.{}.oraclecloud.com/n/{}/b/{}/o/{}",
-            self.region,
-            self.namespace,
-            self.bucket.name(),
-            key
+        build_public_url(
+            &self.namespace,
+            &self.region,
+            &self.bucket.name(),
+            key,
         )
     }
 
@@ -487,7 +486,18 @@ impl UploadManager {
 
 }
 
-/// Sanitize filename: transliterate Polish chars, lowercase, replace spaces with hyphens
+fn build_public_url(
+    namespace: &str,
+    region: &str,
+    bucket: &str,
+    key: &str,
+) -> String {
+    // https://NAMESPACE.objectstorage.REGION.oci.customer-oci.com/n/NAMESPACE/b/BUCKET/o/KEY
+    format!(
+        "https://{namespace}.objectstorage.{region}.oci.customer-oci.com/n/{namespace}/b/{bucket}/o/{key}"
+    )
+}
+
 fn sanitize_filename(name: &str) -> String {
     let mut result = String::with_capacity(name.len());
     
@@ -858,5 +868,19 @@ mod tests {
         let s3_key = format!("myfolder/{}", rel.display());
         
         assert_eq!(s3_key, "myfolder/a/b/c/d/deep.txt");
+    }
+
+    #[test]
+    fn test_build_public_url() {
+        let url = build_public_url(
+            "myns",
+            "eu-frankfurt-1",
+            "my-bucket",
+            "2026-02-06/test_abc123.png",
+        );
+        assert_eq!(
+            url,
+            "https://myns.objectstorage.eu-frankfurt-1.oci.customer-oci.com/n/myns/b/my-bucket/o/2026-02-06/test_abc123.png"
+        );
     }
 }

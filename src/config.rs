@@ -20,7 +20,10 @@ impl std::fmt::Debug for Config {
             .field("oracle", &self.oracle)
             .field("app", &self.app)
             .field("advanced", &self.advanced)
-            .field("credentials", &self.credentials.as_ref().map(|_| "[ENCRYPTED]"))
+            .field(
+                "credentials",
+                &self.credentials.as_ref().map(|_| "[ENCRYPTED]"),
+            )
             .finish()
     }
 }
@@ -88,7 +91,18 @@ impl Config {
         self.credentials.is_some()
     }
 
-    /// Validate required fields are non-empty
+    /// Migrate legacy `oraclecloud.com` S3-compatible endpoint to dedicated `customer-oci.com`.
+    /// Returns `true` if endpoint was migrated.
+    pub fn migrate_to_dedicated_endpoint(&mut self) -> bool {
+        let old = &self.oracle.endpoint;
+        if old.contains("oraclecloud.com") && !old.contains("customer-oci.com") {
+            self.oracle.endpoint = old.replace(".oraclecloud.com", ".oci.customer-oci.com");
+            true
+        } else {
+            false
+        }
+    }
+
     fn validate(&self) -> Result<()> {
         if self.oracle.endpoint.trim().is_empty() {
             anyhow::bail!("oracle.endpoint cannot be empty");
@@ -205,6 +219,68 @@ multipart_chunk_mb = 5
             .unwrap_err()
             .to_string()
             .contains("oracle.bucket cannot be empty"));
+    }
+
+    #[test]
+    fn test_migrate_legacy_endpoint_to_dedicated() {
+        let config_content = r#"
+[oracle]
+endpoint = "https://frtwdfdpq5pc.compat.objectstorage.eu-frankfurt-1.oraclecloud.com"
+bucket = "test-bucket"
+namespace = "frtwdfdpq5pc"
+region = "eu-frankfurt-1"
+
+[app]
+auto_copy_link = true
+auto_start = false
+
+[advanced]
+parallel_uploads = 3
+multipart_threshold_mb = 5
+multipart_chunk_mb = 5
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(config_content.as_bytes()).unwrap();
+        temp_file.flush().unwrap();
+
+        let mut config = Config::load(temp_file.path()).unwrap();
+        assert!(config.migrate_to_dedicated_endpoint());
+        assert_eq!(
+            config.oracle.endpoint,
+            "https://frtwdfdpq5pc.compat.objectstorage.eu-frankfurt-1.oci.customer-oci.com"
+        );
+    }
+
+    #[test]
+    fn test_migrate_already_dedicated_endpoint_is_noop() {
+        let config_content = r#"
+[oracle]
+endpoint = "https://frtwdfdpq5pc.compat.objectstorage.eu-frankfurt-1.oci.customer-oci.com"
+bucket = "test-bucket"
+namespace = "frtwdfdpq5pc"
+region = "eu-frankfurt-1"
+
+[app]
+auto_copy_link = true
+auto_start = false
+
+[advanced]
+parallel_uploads = 3
+multipart_threshold_mb = 5
+multipart_chunk_mb = 5
+"#;
+
+        let mut temp_file = NamedTempFile::new().unwrap();
+        temp_file.write_all(config_content.as_bytes()).unwrap();
+        temp_file.flush().unwrap();
+
+        let mut config = Config::load(temp_file.path()).unwrap();
+        assert!(!config.migrate_to_dedicated_endpoint());
+        assert_eq!(
+            config.oracle.endpoint,
+            "https://frtwdfdpq5pc.compat.objectstorage.eu-frankfurt-1.oci.customer-oci.com"
+        );
     }
 
     #[test]

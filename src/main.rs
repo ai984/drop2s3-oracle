@@ -80,7 +80,17 @@ fn initialize_app_state() -> Result<(tokio::runtime::Runtime, AppState)> {
     let rt_handle = rt.handle().clone();
 
     let config_path = utils::get_exe_dir().join("config.toml");
-    let config = config::Config::load(&config_path).context("Failed to load config")?;
+    let mut config = config::Config::load(&config_path).context("Failed to load config")?;
+
+    if config.migrate_to_dedicated_endpoint() {
+        tracing::info!(
+            endpoint = %config.oracle.endpoint,
+            "Migrated endpoint to dedicated (customer-oci.com)"
+        );
+        if let Err(e) = config.save(&config_path) {
+            tracing::warn!("Failed to save migrated config: {}", e);
+        }
+    }
 
     if config.app.auto_start {
         if let Err(e) = startup::enable_auto_start() {
@@ -298,7 +308,8 @@ fn run_init_robots_cli() -> Result<()> {
     println!();
 
     let config_path = utils::get_exe_dir().join("config.toml");
-    let config = config::Config::load(&config_path).context("Failed to load config")?;
+    let mut config = config::Config::load(&config_path).context("Failed to load config")?;
+    config.migrate_to_dedicated_endpoint();
 
     let rt = tokio::runtime::Builder::new_current_thread()
         .enable_all()

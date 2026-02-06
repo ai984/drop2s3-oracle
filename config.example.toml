@@ -1,5 +1,7 @@
 [oracle]
-endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com"
+# Legacy:    https://NAMESPACE.compat.objectstorage.REGION.oraclecloud.com
+# Dedicated: https://NAMESPACE.compat.objectstorage.REGION.oci.customer-oci.com
+endpoint = "https://NAMESPACE.compat.objectstorage.REGION.oci.customer-oci.com"
 bucket = "my-bucket"
 namespace = "my-namespace"
 access_key = ""
